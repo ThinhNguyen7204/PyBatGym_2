@@ -1,0 +1,89 @@
+/**
+ * @file context.hpp
+ * @brief The Batsim context
+ */
+
+#pragma once
+
+#include <chrono>
+#include <fstream>
+#include <vector>
+
+#include <zmq.h>
+
+#include <rapidjson/document.h>
+
+#include <batprotocol.hpp>
+
+#include "edc.hpp"
+#include "external_events.hpp"
+#include "export.hpp"
+#include "jobs.hpp"
+#include "machines.hpp"
+#include "profiles.hpp"
+#include "protocol.hpp"
+#include "pstate.hpp"
+#include "workload.hpp"
+
+class ExternalDecisionComponent;
+
+/**
+ * @brief Stores a high-resolution timestamp
+ */
+typedef std::chrono::time_point<std::chrono::high_resolution_clock> my_timestamp;
+
+/**
+ * @brief The Batsim context
+ */
+struct BatsimContext
+{
+    void * zmq_context = nullptr;                   //!< The Zero MQ context
+    ExternalDecisionComponent * edc = nullptr;      //!< The External Decision Component
+    std::string edc_init_str;                       //!< The External Decision Component initialization string
+    bool edc_json_format = false;                   //!< Whether JSON format or flatbuffers's binary format should be used to communicate with EDCs.
+
+    batprotocol::MessageBuilder * proto_msg_builder = nullptr; //!< The batprotocol message builder
+    MainArguments * main_args = nullptr;            //!< The arguments received by Batsim's main
+
+    Machines machines;                              //!< The machines
+    Workloads workloads;                            //!< The workloads
+    std::map<std::string, ExternalEventList*> external_event_lists;                 //!< The map of EventLists
+    std::unordered_map<std::string, simgrid::s4u::ActorPtr> job_submitter_actors;   //!< The list of static_job_submitter SimGrid actors (accounts for workloads)
+    std::unordered_map<std::string, simgrid::s4u::ActorPtr> external_event_submitter_actors; //!< The list of static_external_event_submitter SimGrid actors
+    PStateChangeTracer pstate_tracer;               //!< The PStateChangeTracer
+    EnergyConsumptionTracer energy_tracer;          //!< The EnergyConsumptionTracer
+    MachineStateTracer machine_state_tracer;        //!< The MachineStateTracer
+    std::ofstream real_execution_info_file;         //!< The file into which information related to the real execution (real time measurements, real memory usage...) are written
+    JobsTracer jobs_tracer;                         //!< The JobsTracer
+    CurrentSwitches current_switches;               //!< The current switches
+
+    bool forward_profiles_on_simulation_begins;     //!< Stores whether the profiles information of jobs should be sent to the scheduler during SIMULATION_BEGINS event
+    bool forward_profiles_on_job_submission;        //!< Stores whether the profile information of submitted jobs should be sent to the scheduler
+    bool forward_profiles_on_jobs_killed;           //!< Stores whether the profile information of killed jobs should be send to the scheduler
+    bool registration_sched_enabled;                //!< Stores whether the scheduler will be able to register jobs and profiles during the simulation
+    bool registration_sched_finished = false;       //!< Stores whether the scheduler has finished submitting jobs.
+    bool registration_sched_ack;                    //!< Stores whether Batsim will acknowledge dynamic job submission (emit JOB_SUBMITTED events)
+    bool garbage_collect_profiles = true;           //!< Stores whether Batsim will garbage collect the Profiles.
+
+    long double energy_first_job_submission = -1;   //!< The amount of consumed energy (J) when the first job is submitted
+    long double energy_last_job_completion = -1;    //!< The amount of consumed energy (J) when the last job is completed
+
+    long double microseconds_used_by_scheduler = 0; //!< The number of microseconds used by the scheduler
+    my_timestamp simulation_start_time;             //!< The moment in time at which the simulation has started
+    my_timestamp simulation_end_time;               //!< The moment in time at which the simulation has ended
+
+    unsigned long long nb_machine_switches = 0;     //!< The number of machine switches done in the simulation (should be greater or equal to SET_RESOURCE_STATE events. Equal if all requested switches only concern single machines). Does not count transition states.
+    unsigned long long nb_grouped_switches = 0;     //!< The number of switches done in the simulation (should equal to the number of received SET_RESOURCE_STATE events). Does not count transition states.
+
+    bool energy_used;                               //!< Stores whether the energy part of Batsim should be used
+    bool smpi_used;                                 //!< Stores whether SMPI should be used
+    bool trace_schedule;                            //!< Stores whether the resulting schedule should be outputted
+    bool trace_machine_states;                      //!< Stores whether the machines states should be outputted
+    bool trace_pstate_changes;                      //!< Stores whether the machine pstate changes should be outputted
+    std::string platform_filename;                  //!< The name of the platform file
+    std::string export_prefix;                      //!< The output export prefix
+
+    std::string batsim_version;                     //!< The Batsim version (got from the BATSIM_VERSION variable that is usually set by the build system)
+
+    ~BatsimContext();
+};

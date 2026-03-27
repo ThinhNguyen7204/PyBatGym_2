@@ -1,0 +1,128 @@
+# PyBatGym
+
+> A Gymnasium-compatible RL environment for HPC job scheduling with BatSim.
+
+## Features
+
+- **Gymnasium API**: Standard `reset()` / `step()` interface, compatible with SB3, RLlib, CleanRL.
+- **Dual Simulation Backend**: MockAdapter (fast, no deps) + RealBatsimAdapter (C++ BatSim via ZeroMQ).
+- **Workload Traces**: Load real JSON workloads from BatSim / Parallel Workloads Archive.
+- **Multi-Objective Reward**: Configurable weights for utilization, waiting time, slowdown, throughput.
+- **Action Masking**: PPO-friendly `Discrete(K+1)` space with valid action masks.
+- **3 Baseline Heuristics**: Built-in FCFS, SJF, and EASY Backfilling policies.
+- **Plugin System**: CSV logging, TensorBoard, Gymnasium validation, benchmarking.
+
+## Quick Start
+
+```bash
+# Install (core)
+pip install -e .
+
+# Install with RL support (SB3 + torch)
+pip install -e ".[rl]"
+
+# Run tests
+pip install -e ".[dev]"
+pytest tests/ -v
+
+# Run example
+python examples/quickstart.py
+```
+
+## Usage
+
+```python
+import gymnasium as gym
+import pybatgym  # triggers registration
+
+env = gym.make("PyBatGym-v0")
+obs, info = env.reset()
+
+for _ in range(1000):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        obs, info = env.reset()
+
+env.close()
+```
+
+## Custom Config
+
+```python
+from pybatgym.config import PyBatGymConfig
+from pybatgym.env import PyBatGymEnv
+
+config = PyBatGymConfig()
+config.workload.num_jobs = 200
+config.platform.total_nodes = 32
+config.mode = "mock"  # or "real" for BatSim via ZeroMQ
+
+env = PyBatGymEnv(config=config)
+```
+
+## Benchmarking
+
+```python
+from pybatgym.plugins.benchmark import run_baseline, sjf_policy, easy_backfilling_policy
+
+metrics = run_baseline(env, sjf_policy, num_episodes=5)
+print(f"SJF: avg_wait={metrics['avg_waiting_time']:.2f}")
+```
+
+Train PPO and compare against heuristics:
+
+```bash
+python examples/train_ppo_trace.py
+```
+
+## Architecture
+
+```
+Layer 1: Gym API           → env.py
+Layer 2: RL Logic           → observation.py, action.py, reward.py
+Layer 3: Orchestration      → state cache, event sync
+Layer 4: Simulation         → batsim_adapter.py (Mock) / real_adapter.py (ZeroMQ)
+Layer 5: Configuration      → config/ (Pydantic v2 + YAML)
+Layer 6: Plugins            → plugins/ (CSV, TensorBoard, Tester, Benchmark)
+```
+
+## Project Structure
+
+```
+pybatgym/
+├── __init__.py              # Registration
+├── env.py                   # PyBatGymEnv
+├── observation.py           # ObservationBuilder (11+4K dims)
+├── action.py                # ActionMapper Discrete(K+1)
+├── reward.py                # RewardCalculator (hybrid mode)
+├── batsim_adapter.py        # MockAdapter
+├── real_adapter.py          # RealBatsimAdapter (ZeroMQ)
+├── workload_parser.py       # JSON trace loader
+├── models.py                # Job, Resource, Event, ScheduleCommand
+├── config/                  # Pydantic config + YAML loader
+└── plugins/
+    ├── registry.py          # Plugin ABC + Registry
+    ├── logger.py            # CSV Logger
+    ├── benchmark.py         # FCFS / SJF / EASY Backfilling
+    ├── tensorboard_logger.py # TensorBoard metrics
+    └── tester.py            # Gymnasium check_env
+
+tests/                       # 7 test files (pytest)
+examples/                    # quickstart, trace test, PPO training, real test
+docs/                        # GUIDE.md, TESTING.md, PROJECT_REPORT.md, SUMMARY.md
+data/                        # Sample platforms & workloads from BatSim
+```
+
+## Documentation
+
+| Doc | Nội dung |
+|-----|---------|
+| [GUIDE.md](docs/GUIDE.md) | Hướng dẫn chi tiết (13 mục, tiếng Việt) |
+| [TESTING.md](docs/TESTING.md) | Quy trình kiểm định & benchmarking |
+| [PROJECT_REPORT.md](docs/PROJECT_REPORT.md) | Báo cáo tổng kết 8 Phase |
+| [SUMMARY.md](docs/SUMMARY.md) | Tóm tắt nhanh: đã làm / cần làm |
+
+## License
+
+MIT

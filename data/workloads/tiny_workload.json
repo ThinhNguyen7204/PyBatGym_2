@@ -1,0 +1,18 @@
+{
+    "description": "A tiny workload with 6 jobs for quick testing.",
+    "nb_res": 2,
+    "jobs": [
+        {"id": 0, "subtime": 0, "walltime": 100, "res": 1, "profile": "delay10"},
+        {"id": 1, "subtime": 3, "walltime": 100, "res": 1, "profile": "delay10"},
+        {"id": 2, "subtime": 6, "walltime": 100, "res": 1, "profile": "delay10"},
+        {"id": 3, "subtime": 9, "walltime": 100, "res": 1, "profile": "delay10"},
+        {"id": 4, "subtime": 12, "walltime": 100, "res": 1, "profile": "delay10"},
+        {"id": 5, "subtime": 15, "walltime": 100, "res": 1, "profile": "delay10"}
+    ],
+    "profiles": {
+        "delay10": {
+            "type": "DelayProfile",
+            "delay": 10
+        }
+    }
+}

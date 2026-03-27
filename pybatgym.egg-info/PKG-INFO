@@ -1,0 +1,114 @@
+Metadata-Version: 2.4
+Name: pybatgym
+Version: 0.1.0
+Summary: A Gymnasium-compatible RL environment for HPC scheduling on BatSim
+Author: PyBatGym Team
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: gymnasium>=0.29.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: pyyaml>=6.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Provides-Extra: rl
+Requires-Dist: stable-baselines3>=2.0.0; extra == "rl"
+Requires-Dist: sb3-contrib>=2.0.0; extra == "rl"
+Provides-Extra: all
+Requires-Dist: pybatgym[dev,rl]; extra == "all"
+
+# PyBatGym
+
+> A Gymnasium-compatible RL environment for HPC job scheduling on BatSim.
+
+## Features
+
+- **Gymnasium API**: Standard `reset()` / `step()` interface, compatible with SB3, RLlib, CleanRL.
+- **Mock Simulator**: Synthetic workload generation — no BatSim installation needed for development.
+- **Multi-Objective Reward**: Configurable weights for utilization, waiting time, slowdown, throughput.
+- **Action Masking**: PPO-friendly `Discrete(K+1)` space with valid action masks.
+- **Plugin System**: Extensible hooks for logging, benchmarking, monitoring.
+- **Baseline Heuristics**: Built-in FCFS and SJF policies for comparison.
+
+## Quick Start
+
+```bash
+# Install
+pip install -e .
+
+# Run example
+python examples/quickstart.py
+
+# Run tests
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+## Usage
+
+```python
+import gymnasium as gym
+import pybatgym  # triggers registration
+
+env = gym.make("PyBatGym-v0")
+obs, info = env.reset()
+
+for _ in range(1000):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        obs, info = env.reset()
+
+env.close()
+```
+
+## Custom Config
+
+```python
+from pybatgym.config import PyBatGymConfig
+from pybatgym.env import PyBatGymEnv
+
+config = PyBatGymConfig()
+config.workload.num_jobs = 200
+config.platform.total_nodes = 32
+
+env = PyBatGymEnv(config=config)
+```
+
+Or use YAML (see `configs/default.yaml`):
+
+```python
+env = PyBatGymEnv(config_path="configs/default.yaml")
+```
+
+## Architecture
+
+```
+Layer 1: Gym API (env.py)
+Layer 2: RL Logic (observation/action/reward)
+Layer 3: Orchestration (state cache, event sync)
+Layer 4: Simulation Interface (batsim_adapter.py)
+Layer 5: Configuration (Pydantic + YAML)
+Layer 6: Plugins (logging, benchmark, monitor)
+```
+
+## Project Structure
+
+```
+pybatgym/
+├── __init__.py          # Registration
+├── env.py               # PyBatGymEnv
+├── observation.py       # ObservationBuilder
+├── action.py            # ActionMapper
+├── reward.py            # RewardCalculator
+├── batsim_adapter.py    # Mock/Real adapters
+├── models.py            # Job, Event, Resource
+├── config/              # Pydantic config + YAML
+└── plugins/             # Logger, Benchmark
+```
+
+## License
+
+MIT

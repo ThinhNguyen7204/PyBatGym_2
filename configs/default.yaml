@@ -1,0 +1,35 @@
+# PyBatGym Default Configuration
+# See docs/GUIDE.md for all options
+
+mode: mock  # mock (fast dev) | real (BatSim)
+
+platform:
+  total_nodes: 16
+  cores_per_node: 4
+
+workload:
+  source: synthetic
+  num_jobs: 100
+  max_job_runtime: 100.0
+  max_job_cores: 8
+  seed: 42
+
+episode:
+  max_simulation_time: 10000.0
+  max_steps: 5000
+
+observation:
+  top_k_jobs: 10
+  max_queue_length: 200
+  max_waiting_time: 1000.0
+  max_bounded_slowdown: 100.0
+
+reward_weights:
+  utilization: 0.3
+  waiting_time: 0.3
+  slowdown: 0.3
+  throughput: 0.1
+
+reward_type: hybrid  # step | episodic | hybrid
+
+plugins: []
