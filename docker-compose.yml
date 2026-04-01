@@ -1,3 +1,5 @@
+# version: "3.9"  # obsolete, removed to suppress warnings
+
 # ============================================================
 # PyBatGym Docker Compose
 #
@@ -22,6 +24,8 @@ services:
     entrypoint: ["/bin/bash", "/workspace/entrypoint.sh"]
     environment:
       - PYTHONUNBUFFERED=1
+    ports:
+      - "28000:28000"
 
   # ── TensorBoard (xem training metrics) ────────────────
   tensorboard:
@@ -35,3 +39,15 @@ services:
       - "6006:6006"
     environment:
       - PYTHONUNBUFFERED=1
+
+  # ── BatSim Simulator (C++) ──────────────────────────────
+  batsim:
+    image: oarteam/batsim:3.1.0
+    volumes:
+      - .:/workspace
+    # Wrapper script: chờ Python ZMQ bind xong rồi mới connect
+    entrypoint: ["/bin/sh", "/workspace/scripts/batsim_start.sh"]
+    depends_on:
+      - shell
+    restart: "no"
+

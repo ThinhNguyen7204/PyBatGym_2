@@ -194,8 +194,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         try:
             batsim_bin = _find_batsim()
         except FileNotFoundError as e:
-            print(str(e))
-            self._is_done = True
+            print("[RealBatsimAdapter] Local 'batsim' binary not found. Assuming BatSim is running externally (e.g., Plan B via Docker).")
             return
 
         Path("logs").mkdir(exist_ok=True)
@@ -228,10 +227,11 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
     # PyBatsim scheduler callbacks (called from background thread)
     # --------------------------------------------------------------------------
 
-    def on_simulation_begins(self) -> None:
+    def onSimulationBegins(self) -> None:
+        self._free_cores = set(range(self.bs.nb_compute_resources))
         self._state_queue.put("READY")
 
-    def on_job_submission(self, job) -> None:
+    def onJobSubmission(self, job) -> None:
         job_id_str = job.id.split("!")[-1] if "!" in job.id else job.id
         try:
             job_id = int(job_id_str)
@@ -240,29 +240,36 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
         py_job = Job(
             job_id=job_id,
-            submit_time=job.subtime,
-            requested_walltime=job.walltime,
-            actual_runtime=job.walltime,
-            requested_resources=job.res,
+            submit_time=job.submit_time,
+            requested_walltime=job.requested_time,
+            actual_runtime=job.requested_time,
+            requested_resources=job.requested_resources,
         )
         self._pending_jobs.append(py_job)
         self._events.append(Event(EventType.JOB_SUBMITTED, self._internal_time, job=py_job))
+        self._wakeup_and_wait()
 
-    def on_job_completion(self, job) -> None:
+    def onJobCompletion(self, job) -> None:
         job_id_str = job.id.split("!")[-1] if "!" in job.id else job.id
         py_job = next(
             (j for j in self._running_jobs if str(j.job_id) == job_id_str), None
         )
         if py_job:
+            if hasattr(py_job, "allocated_core_set"):
+                self._free_cores.update(py_job.allocated_core_set)
             py_job.status = JobStatus.COMPLETED
             py_job.finish_time = self._internal_time
             self._running_jobs.remove(py_job)
             self._completed_jobs.append(py_job)
             self._resource.release(py_job.requested_resources)
             self._events.append(Event(EventType.JOB_COMPLETED, self._internal_time, job=py_job))
+        self._wakeup_and_wait()
 
-    def on_requested_call(self) -> None:
+    def _wakeup_and_wait(self) -> None:
         """BatSim paused: send state to RL agent, wait for decision."""
+        if not hasattr(self, 'bs') or self.bs is None:
+            return
+        
         self._internal_time = self.bs.time()
         self._state_queue.put("WAKEUP")
 
@@ -274,7 +281,16 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
                 batsim_job_id = str(cmd.job.job_id)
                 batsim_jobs = getattr(self.bs, "jobs", {})
                 if batsim_job_id in batsim_jobs:
-                    self.bs.execute_job(batsim_jobs[batsim_job_id])
+                    actual_job = batsim_jobs[batsim_job_id]
+                    req_cores = cmd.job.requested_resources
+                    alloc = set(list(self._free_cores)[:req_cores])
+                    self._free_cores.difference_update(alloc)
+                    cmd.job.allocated_core_set = alloc
+                    
+                    from procset import ProcSet
+                    actual_job.allocation = ProcSet(*alloc)
+                    self.bs.execute_jobs([actual_job])
+                    
                     cmd.job.status = JobStatus.RUNNING
                     cmd.job.start_time = self._internal_time
                     if cmd.job in self._pending_jobs:
@@ -283,5 +299,5 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
                     if self._resource.can_allocate(cmd.job.requested_resources):
                         self._resource.allocate(cmd.job.requested_resources)
 
-    def on_simulation_ends(self) -> None:
+    def onSimulationEnds(self) -> None:
         self._state_queue.put("DONE")

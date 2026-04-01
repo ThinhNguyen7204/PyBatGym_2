@@ -5,22 +5,13 @@
 # ============================================================
 
 # ── Stage 1: Nix builder ────────────────────────────────────
-FROM ubuntu:22.04 AS batsim-builder
+FROM nixos/nix AS batsim-builder
 
-ARG DEBIAN_FRONTEND=noninteractive
+# Configure Nix to allow flakes
+RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
 
-RUN apt-get update -qq && apt-get install -y \
-    curl xz-utils git sudo \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Nix (single-user, no systemd needed)
-RUN curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
-
-ENV PATH=/root/.nix-profile/bin:$PATH
-
-# Enable flakes
-RUN mkdir -p /root/.config/nix && \
-    echo "experimental-features = nix-command flakes" >> /root/.config/nix/nix.conf
+# Install git
+RUN nix-env -iA nixpkgs.git
 
 # Clone BatSim source
 RUN git clone https://framagit.org/batsim/batsim.git /batsim_src

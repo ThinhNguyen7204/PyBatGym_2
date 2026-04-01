@@ -49,7 +49,6 @@ logs/
 batsim_out*
 
 # ── BatSim build artifacts ─────────────────────────────────────────────────
-batsim_data/
 # ^ Large C++ source + Nix build. Clone separately:
 #   git clone https://framagit.org/batsim/batsim batsim_data
 
