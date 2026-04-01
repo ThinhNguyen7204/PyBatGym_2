@@ -7,7 +7,8 @@ from pybatgym.workload_parser import parse_workload
 
 def test_parse_json_workload():
     """Verify JSON workload parser works correctly."""
-    path = Path("D:/ThinhProject/data/workloads/tiny_workload.json")
+    project_root = Path(__file__).resolve().parent.parent
+    path = project_root / "data" / "workloads" / "tiny_workload.json"
     if not path.exists():
         return  # test skips if file is missing
         

@@ -22,7 +22,7 @@ def main():
     print("   PyBatGym: Training PPO on Custom Workload Trace    ")
     print("======================================================")
 
-    data_dir = Path(os.path.abspath("D:/ThinhProject/data"))
+    data_dir = Path(__file__).parent.parent / "data"
     trace_path = data_dir / "workloads" / "tiny_workload.json"
     
     # 1. Configure the Environment

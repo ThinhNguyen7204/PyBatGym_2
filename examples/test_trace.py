@@ -9,7 +9,7 @@ from pybatgym.plugins.benchmark import run_baseline, sjf_policy, easy_backfillin
 
 def main():
     print("--- Testing PyBatGym with custom JSON trace ---")
-    data_dir = Path("D:/ThinhProject/data")
+    data_dir = Path(__file__).resolve().parent.parent / "data"
     
     config = PyBatGymConfig()
     config.platform.total_nodes = 5

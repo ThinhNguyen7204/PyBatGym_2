@@ -6,6 +6,7 @@ pybatgym/batsim_adapter.py
 pybatgym/env.py
 pybatgym/models.py
 pybatgym/observation.py
+pybatgym/real_adapter.py
 pybatgym/reward.py
 pybatgym/workload_parser.py
 pybatgym.egg-info/PKG-INFO
