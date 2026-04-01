@@ -90,6 +90,8 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         self._completed_jobs: list[Job] = []
         self._events: list[Event] = []
         self._resource: Resource = self._make_resource()
+        # Maps our integer job_id → full BatSim job id string (e.g. 0 → "w0!0")
+        self._batsim_job_id_map: dict[int, str] = {}
 
     # --------------------------------------------------------------------------
     # BatsimAdapter interface (called from main/RL thread)
@@ -101,6 +103,16 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
     def reset(self) -> tuple[list[Event], Resource]:
         """Restart simulation: spawn BatSim process + pybatsim thread."""
+        # Kill previous background thread if still alive
+        if self._batsim_thread and self._batsim_thread.is_alive():
+            self._is_done = True
+            # Unblock the thread if it's stuck waiting on action_queue
+            try:
+                self._action_queue.put_nowait([])
+            except Exception:
+                pass
+            self._batsim_thread.join(timeout=3)
+
         self._clear_state()
         self._start_batsim_subprocess()
         self._start_pybatsim_thread()
@@ -151,6 +163,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         self._completed_jobs = []
         self._events = []
         self._resource = self._make_resource()
+        self._batsim_job_id_map = {}
         # Drain queues
         for q in (self._action_queue, self._state_queue):
             while not q.empty():
@@ -216,20 +229,46 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         """Start pybatsim ZeroMQ server in background thread."""
 
         def _run() -> None:
-            # pybatsim 3.x: Batsim(scheduler, network_endpoint, timeout)
-            bs = Batsim(self, self.socket_endpoint, timeout=120)
-            bs.start()
+            try:
+                # pybatsim 3.x: Batsim(scheduler, network_endpoint, timeout)
+                bs = Batsim(self, self.socket_endpoint, timeout=120)
+                bs.start()
+            except Exception as exc:
+                print(f"[BatSim thread] Exception: {exc}")
+            finally:
+                # Always wake main thread so _wait_for_next_state() doesn't hang
+                self._is_done = True
+                try:
+                    self._state_queue.put_nowait("DONE")
+                except Exception:
+                    pass
 
-        self._batsim_thread = threading.Thread(target=_run, daemon=True)
+        self._batsim_thread = threading.Thread(target=_run, daemon=True, name="pybatsim")
         self._batsim_thread.start()
 
     # --------------------------------------------------------------------------
     # PyBatsim scheduler callbacks (called from background thread)
     # --------------------------------------------------------------------------
+    def onDeadlock(self) -> None:
+        """Override default: do NOT raise. Just pause briefly and retry.
+        PyBatSim 3.1.0 uses non-blocking recv during simulation — returning
+        None is normal when BatSim is still processing our EXECUTE_JOB.
+        """
+        import time
+        time.sleep(0.005)
 
     def onSimulationBegins(self) -> None:
         self._free_cores = set(range(self.bs.nb_compute_resources))
         self._state_queue.put("READY")
+
+    def onBeforeEvents(self) -> None:
+        pass
+
+    def onNoMoreEvents(self) -> None:
+        pass
+
+    def onNoMoreJobsInWorkloads(self) -> None:
+        self.bs.no_more_static_jobs = True
 
     def onJobSubmission(self, job) -> None:
         job_id_str = job.id.split("!")[-1] if "!" in job.id else job.id
@@ -237,6 +276,8 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
             job_id = int(job_id_str)
         except ValueError:
             job_id = hash(job_id_str)
+        # Store full BatSim job ID string for later lookup
+        self._batsim_job_id_map[job_id] = job.id
 
         py_job = Job(
             job_id=job_id,
@@ -278,10 +319,11 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
         for cmd in cmds:
             if cmd and cmd.command_type == ScheduleCommandType.EXECUTE_JOB and cmd.job:
-                batsim_job_id = str(cmd.job.job_id)
+                # Look up full BatSim job ID (e.g. "w0!0") from our int job_id
+                full_batsim_id = self._batsim_job_id_map.get(cmd.job.job_id)
                 batsim_jobs = getattr(self.bs, "jobs", {})
-                if batsim_job_id in batsim_jobs:
-                    actual_job = batsim_jobs[batsim_job_id]
+                if full_batsim_id and full_batsim_id in batsim_jobs:
+                    actual_job = batsim_jobs[full_batsim_id]
                     req_cores = cmd.job.requested_resources
                     alloc = set(list(self._free_cores)[:req_cores])
                     self._free_cores.difference_update(alloc)
