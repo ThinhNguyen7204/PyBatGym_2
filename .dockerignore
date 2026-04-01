@@ -1,0 +1,39 @@
+# ── Virtual environments ───────────────────────────────────
+.venv/
+.venv_ubuntu/
+venv/
+
+# ── BatSim source (built inside Docker) ───────────────────
+# Note: binary copied from builder stage, no need to send source
+batsim_data/
+
+# ── Python artifacts ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Logs & outputs ─────────────────────────────────────────
+logs/
+*.log
+batsim_out*
+
+# ── Testing ────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Editors & OS ───────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ── AI tooling ─────────────────────────────────────────────
+.agent/
+
+# ── Git ────────────────────────────────────────────────────
+.git/

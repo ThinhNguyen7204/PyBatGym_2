@@ -1,0 +1,56 @@
+version: "3.9"
+
+# ============================================================
+# PyBatGym Docker Compose
+#
+# Usage:
+#   docker-compose up test      # run trace test (no BatSim needed)
+#   docker-compose up train     # run PPO training
+#   docker-compose run shell    # interactive shell
+#
+# First time: docker-compose pull  (pulls pre-built image from ghcr.io)
+# ============================================================
+
+x-base: &base
+  image: ghcr.io/khiemvuong/pybatgym:latest
+  volumes:
+    - .:/workspace          # live code mount (edits on host reflect instantly)
+    - pybatgym-logs:/workspace/logs
+  working_dir: /workspace
+  environment:
+    - PYTHONUNBUFFERED=1
+    - PATH=/opt/batsim/bin:/opt/venv/bin:$PATH
+    - VIRTUAL_ENV=/opt/venv
+
+services:
+  # ── Interactive shell ──────────────────────────────────────
+  shell:
+    <<: *base
+    stdin_open: true
+    tty: true
+    command: bash
+
+  # ── Trace test (no BatSim, instant result) ─────────────────
+  test:
+    <<: *base
+    command: python3 examples/test_trace.py
+
+  # ── PPO Training ───────────────────────────────────────────
+  train:
+    <<: *base
+    command: python3 examples/train_ppo_trace.py
+
+  # ── Unit tests ─────────────────────────────────────────────
+  pytest:
+    <<: *base
+    command: python3 -m pytest tests/ -v
+
+  # ── TensorBoard (view training metrics) ───────────────────
+  tensorboard:
+    <<: *base
+    command: tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006
+    ports:
+      - "6006:6006"
+
+volumes:
+  pybatgym-logs:
