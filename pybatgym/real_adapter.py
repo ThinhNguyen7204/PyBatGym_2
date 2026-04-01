@@ -34,6 +34,32 @@ _BATSIM_DATA = _PROJECT_ROOT / "batsim_data"
 _DEFAULT_PLATFORM = _BATSIM_DATA / "platforms" / "small_platform.xml"
 _DEFAULT_WORKLOAD = _PROJECT_ROOT / "data" / "workloads" / "tiny_workload.json"
 
+# Known BatSim binary locations (searched in order)
+_BATSIM_SEARCH_PATHS = [
+    _BATSIM_DATA / "result" / "bin" / "batsim",   # Nix build (local)
+    Path("/opt/batsim/bin/batsim"),                # Docker image (committed)
+    Path("/usr/local/bin/batsim"),                 # System install
+    Path("/usr/bin/batsim"),
+]
+
+
+def _find_batsim() -> str:
+    """Find batsim binary: check known locations first, then fall back to PATH."""
+    import shutil
+    # 1. Check known absolute paths
+    for p in _BATSIM_SEARCH_PATHS:
+        if p.exists() and p.is_file():
+            return str(p)
+    # 2. Fall back to PATH
+    found = shutil.which("batsim")
+    if found:
+        return found
+    raise FileNotFoundError(
+        "[RealBatsimAdapter] 'batsim' not found.\n"
+        f"  Checked: {[str(p) for p in _BATSIM_SEARCH_PATHS]}\n"
+        "  Fix: export PATH=/workspace/batsim_data/result/bin:$PATH"
+    )
+
 
 class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
     """Integrates real BatSim simulator using pybatsim over ZeroMQ.
@@ -164,8 +190,16 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         platform, workload = self._resolve_paths()
         socket = self.socket_endpoint.replace("*", "localhost")
 
+        # Auto-detect batsim binary (no need to set PATH manually)
+        try:
+            batsim_bin = _find_batsim()
+        except FileNotFoundError as e:
+            print(str(e))
+            self._is_done = True
+            return
+
         Path("logs").mkdir(exist_ok=True)
-        cmd = ["batsim", "-p", platform, "-w", workload, "-e", "logs/batsim_out", "-s", socket]
+        cmd = [batsim_bin, "-p", platform, "-w", workload, "-e", "logs/batsim_out", "-s", socket]
 
         print(f"[RealBatsimAdapter] Starting BatSim: {' '.join(cmd)}")
         try:
@@ -174,11 +208,10 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        except FileNotFoundError:
-            print(
-                "[RealBatsimAdapter] ERROR: 'batsim' not found in PATH.\n"
-                "  Add it with: export PATH=/workspace/batsim_data/result/bin:$PATH"
-            )
+            print(f"[RealBatsimAdapter] BatSim PID: {self._batsim_proc.pid}")
+        except FileNotFoundError as e:
+            print(f"[RealBatsimAdapter] ERROR: {e}")
+            self._is_done = True
 
     def _start_pybatsim_thread(self) -> None:
         """Start pybatsim ZeroMQ server in background thread."""
