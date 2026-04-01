@@ -3,72 +3,37 @@ version: "3.9"
 # ============================================================
 # PyBatGym Docker Compose
 #
-# Người dùng mới chỉ cần:
-#   docker-compose up         → mở shell tại /workspace, venv tự setup
+# Image đã chứa sẵn: Python, PyTorch, TensorFlow, SB3,...
+# Code được mount từ thư mục hiện tại vào /workspace
 #
-# Các lệnh khác:
-#   docker-compose run test   → chạy test_trace.py
-#   docker-compose run train  → chạy PPO training
+# Cách dùng:
+#   docker-compose run shell   → mở terminal Ubuntu tại /workspace
+#   (sau đó tự gõ lệnh test/train bên trong terminal đó)
 # ============================================================
-
-x-base: &base
-  image: ghcr.io/khiemvuong/pybatgym:latest
-  volumes:
-    - .:/workspace            # code từ host mount vào container
-    - pybatgym-logs:/workspace/logs
-  working_dir: /workspace
-  environment:
-    - PYTHONUNBUFFERED=1
 
 services:
 
-  # ── Mặc định: mở shell tại /workspace ─────────────────
-  # Chạy: docker-compose up
-  # hoặc: docker-compose run shell
+  # ── Mở Ubuntu terminal tại /workspace ─────────────────
   shell:
-    <<: *base
-    stdin_open: true
-    tty: true
+    image: ghcr.io/khiemvuong/pybatgym:latest
+    volumes:
+      - .:/workspace          # code mount từ Windows vào Ubuntu
+    working_dir: /workspace
+    stdin_open: true          # giữ stdin mở (cần cho interactive)
+    tty: true                 # tạo terminal thật
     entrypoint: ["/bin/bash", "/workspace/entrypoint.sh"]
+    environment:
+      - PYTHONUNBUFFERED=1
 
-  # ── Chạy trace test (kết quả ngay ~5 giây) ────────────
-  # Chạy: docker-compose run test
-  test:
-    <<: *base
-    entrypoint: ["/bin/bash", "-c"]
-    command: >
-      "source /workspace/entrypoint.sh 2>/dev/null;
-       python3 examples/test_trace.py"
-
-  # ── PPO Training ───────────────────────────────────────
-  # Chạy: docker-compose run train
-  train:
-    <<: *base
-    entrypoint: ["/bin/bash", "-c"]
-    command: >
-      "source /workspace/entrypoint.sh 2>/dev/null;
-       python3 examples/train_ppo_trace.py"
-
-  # ── Unit tests ─────────────────────────────────────────
-  # Chạy: docker-compose run pytest
-  pytest:
-    <<: *base
-    entrypoint: ["/bin/bash", "-c"]
-    command: >
-      "source /workspace/entrypoint.sh 2>/dev/null;
-       python3 -m pytest tests/ -v"
-
-  # ── TensorBoard ────────────────────────────────────────
-  # Chạy: docker-compose up tensorboard
-  # Xem tại: http://localhost:6006
+  # ── TensorBoard (xem training metrics) ────────────────
   tensorboard:
-    <<: *base
-    entrypoint: ["/bin/bash", "-c"]
-    command: >
-      "source /workspace/.venv_ubuntu/bin/activate;
-       tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006"
+    image: ghcr.io/khiemvuong/pybatgym:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "-c",
+      "source /opt/venv/bin/activate && tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006"]
     ports:
       - "6006:6006"
-
-volumes:
-  pybatgym-logs:
+    environment:
+      - PYTHONUNBUFFERED=1
