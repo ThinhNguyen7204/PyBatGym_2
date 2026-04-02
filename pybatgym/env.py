@@ -72,6 +72,11 @@ class PyBatGymEnv(gym.Env):
         self._state: dict[str, Any] = {}
         self._plugins: list[Any] = []
 
+        # Auto-register plugins from config
+        for plugin in getattr(self._config, "plugins", []):
+            if hasattr(plugin, "on_step"):
+                self._plugins.append(plugin)
+
     def reset(
         self,
         *,

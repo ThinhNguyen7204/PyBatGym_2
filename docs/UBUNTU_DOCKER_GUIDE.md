@@ -237,25 +237,35 @@ python examples/quickstart.py
 python examples/test_trace.py
 ```
 
-### 6.2. Test Real Mode (cần BatSim)
+### 6.2. Test Real Mode (Cần chạy 2 Terminal song song)
 
+Chế độ `real` yêu cầu giao tiếp ZeroMQ giữa Python và BatSim. Do chạy qua Docker Compose, bạn cần bật Python lên trước để mở port, sau đó bật BatSim.
+
+**Terminal 1 (Ubuntu shell):** Khởi chạy tác nhân Python
 ```bash
-export PATH=/workspace/batsim_data/result/bin:$PATH
+# Đảm bảo đã vào trong Ubuntu container bằng: docker exec -it pybatgym_2-shell-1 bash
 source /workspace/.venv_ubuntu/bin/activate
+export PATH=/workspace/batsim_data/result/bin:$PATH
 
 python examples/test_real.py
+# Script sẽ nạp và dừng ở dòng: 
+# "Assuming BatSim is running externally (e.g., Plan B via Docker)."
 ```
 
-**Expected output (thành công):**
+**Terminal 2 (PowerShell):** Khởi chạy BatSim (C++)
+```powershell
+cd D:\PyBat\PyBatGym_2
+# BatSim tự động chờ 6 giây (nhờ batsim_start.sh) rồi mới kết nối vào Python
+docker-compose up batsim
 ```
---- Testing PyBatGym with REAL BatSim (ZeroMQ) ---
-[Init] Workload : /workspace/data/workloads/tiny_workload.json
-[Init] BatSim   : /workspace/batsim_data/result/bin/batsim
-[RealBatsimAdapter] Starting BatSim: batsim -p ... -w ... -s tcp://localhost:28000
 
+**Kết quả thành công:**
+Bên Terminal 1 (Python) sẽ in ra chuỗi sự kiện và tóm tắt `--- RESULTS ---`:
+```
+[RealBatsimAdapter] Local 'batsim' binary not found. Assuming BatSim is running externally...
 [Run] Running Shortest-Job-First Baseline...
 --- RESULTS ---
-{'avg_reward': ..., 'avg_utilization': ..., 'avg_waiting_time': ..., 'avg_slowdown': ...}
+{'avg_reward': -0.52, 'avg_utilization': 0.0, 'avg_waiting_time': 0.0, 'avg_slowdown': 0.0}
 Test finished.
 ```
 

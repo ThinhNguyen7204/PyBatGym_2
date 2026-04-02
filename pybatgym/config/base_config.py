@@ -62,6 +62,8 @@ class ObservationConfig(BaseModel):
 class PyBatGymConfig(BaseModel):
     """Root configuration for PyBatGym environment."""
 
+    model_config = {"arbitrary_types_allowed": True}
+
     mode: str = Field(default="mock", pattern=r"^(mock|real)$")
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
     workload: WorkloadConfig = Field(default_factory=WorkloadConfig)
@@ -69,4 +71,4 @@ class PyBatGymConfig(BaseModel):
     observation: ObservationConfig = Field(default_factory=ObservationConfig)
     reward_weights: RewardWeights = Field(default_factory=RewardWeights)
     reward_type: str = Field(default="hybrid", pattern=r"^(step|episodic|hybrid)$")
-    plugins: list[dict] = Field(default_factory=list)
+    plugins: list = Field(default_factory=list)

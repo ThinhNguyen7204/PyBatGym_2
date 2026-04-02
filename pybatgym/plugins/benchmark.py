@@ -122,12 +122,20 @@ def run_baseline(
             ep_reward += reward
 
         total_reward += ep_reward
-        total_util += info.get("utilization", 0.0)
 
         completed = env._adapter.get_completed_jobs()
         if completed:
-            total_wait += sum(j.waiting_time for j in completed) / len(completed)
-            total_slowdown += sum(j.bounded_slowdown for j in completed) / len(completed)
+            makespan = env._adapter.get_current_time()
+            total_cores = env._state.get("resource").total_cores
+            
+            wait_sum = sum(j.waiting_time for j in completed)
+            slowdown_sum = sum(j.bounded_slowdown for j in completed)
+            busy_time_sum = sum(j.actual_runtime * j.requested_resources for j in completed)
+
+            total_wait += wait_sum / len(completed)
+            total_slowdown += slowdown_sum / len(completed)
+            if makespan > 0 and total_cores > 0:
+                total_util += busy_time_sum / (makespan * total_cores)
 
     n = max(num_episodes, 1)
     return {

@@ -39,39 +39,36 @@ class TensorBoardLoggerPlugin(Plugin):
             print("Warning: TensorBoardLoggerPlugin requires `tensorboard` and `torch`. "
                   "Logging is disabled. Install via `pip install tensorboard torch`.")
 
-    def on_step(self, action: int, observation: Any, reward: float, 
-                terminated: bool, truncated: bool, info: dict[str, Any]) -> None:
-        """Handle step event to accumulate rewards."""
+    def on_step(self, action: int, reward: float,
+                state: dict[str, Any], done: bool) -> None:
+        """Called after each env.step(). Matches base Plugin signature."""
         if not self._writer:
             return
-            
+
         self._step_count += 1
         self._current_episode_rewards.append(reward)
-        
-        if terminated or truncated:
-            self._log_episode(info)
 
-    def _log_episode(self, info: dict[str, Any]) -> None:
+        # Per-step scalar
+        self._writer.add_scalar("Step/Reward", reward, self._step_count)
+
+        if done:
+            self._log_episode(state)
+
+    def _log_episode(self, state: dict[str, Any]) -> None:
         """Log aggregated metrics at the end of an episode."""
         if not self._writer:
             return
-            
+
         self._episode_count += 1
-        
-        # Log aggregated rewards
+
         total_reward = sum(self._current_episode_rewards)
         self._writer.add_scalar("Episode/Total_Reward", total_reward, self._episode_count)
-        
-        # Log metrics from the environment's info dict
-        if "utilization" in info:
-            self._writer.add_scalar("Metrics/Utilization", info["utilization"], self._episode_count)
-        if "throughput" in info:
-            self._writer.add_scalar("Metrics/Throughput", info["throughput"], self._episode_count)
-            
-        if "avg_waiting_time" in info:
-            self._writer.add_scalar("Metrics/Average_Waiting_Time", info["avg_waiting_time"], self._episode_count)
-        if "avg_bounded_slowdown" in info:
-            self._writer.add_scalar("Metrics/Average_Slowdown", info["avg_bounded_slowdown"], self._episode_count)
+        self._writer.add_scalar("Episode/Length", len(self._current_episode_rewards), self._episode_count)
+
+        # Extract utilization from resource in state
+        resource = state.get("resource")
+        if resource is not None:
+            self._writer.add_scalar("Metrics/Utilization", resource.utilization, self._episode_count)
 
         self._current_episode_rewards.clear()
 

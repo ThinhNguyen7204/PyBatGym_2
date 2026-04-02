@@ -26,6 +26,7 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - "28000:28000"
+      - "6006:6006"
 
   # ── TensorBoard (xem training metrics) ────────────────
   tensorboard:
@@ -33,8 +34,7 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
-    entrypoint: ["/bin/bash", "-c",
-      "source /opt/venv/bin/activate && tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006"]
+    entrypoint: ["/bin/bash", "-c", "source /workspace/.venv_ubuntu/bin/activate && tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006"]
     ports:
       - "6006:6006"
     environment:

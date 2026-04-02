@@ -68,6 +68,19 @@ def main():
         ep_reward += reward
         done = terminated or truncated
         
+    # Calculate PPO metrics manually from completed jobs
+    ppo_metrics = {"avg_waiting_time": 0.0, "avg_slowdown": 0.0, "avg_utilization": 0.0}
+    completed = env._adapter.get_completed_jobs()
+    if completed:
+        makespan = env._adapter.get_current_time()
+        total_cores = env.unwrapped._state.get("resource").total_cores
+        
+        ppo_metrics["avg_waiting_time"] = sum(j.waiting_time for j in completed) / len(completed)
+        ppo_metrics["avg_slowdown"] = sum(j.bounded_slowdown for j in completed) / len(completed)
+        if makespan > 0 and total_cores > 0:
+            busy_time = sum(j.actual_runtime * j.requested_resources for j in completed)
+            ppo_metrics["avg_utilization"] = busy_time / (makespan * total_cores)
+
     print("\n======================================================")
     print("                 FINAL COMPARISON                     ")
     print("======================================================")
@@ -79,14 +92,14 @@ def main():
         
     metrics_to_print = [
         ("Avg Waiting Time (s)", "avg_waiting_time", "avg_waiting_time"),
-        ("Avg Slowdown", "avg_slowdown", "avg_bounded_slowdown"),
-        ("Avg Utilization (%)", "avg_utilization", "utilization"),
+        ("Avg Slowdown", "avg_slowdown", "avg_slowdown"),
+        ("Avg Utilization (%)", "avg_utilization", "avg_utilization"),
     ]
     
     for label, base_key, ppo_key in metrics_to_print:
         sjf_v = sjf_metrics.get(base_key, 0.0)
         easy_v = easy_metrics.get(base_key, 0.0)
-        ppo_v = info.get(ppo_key, 0.0)
+        ppo_v = ppo_metrics.get(ppo_key, 0.0)
         
         # Format utilization specifically
         if "Utilization" in label:
