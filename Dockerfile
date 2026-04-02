@@ -10,11 +10,8 @@ FROM nixos/nix AS batsim-builder
 # Configure Nix to allow flakes
 RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
 
-# Install git
-RUN nix-env -iA nixpkgs.git
-
-# Clone BatSim source
-RUN git clone https://framagit.org/batsim/batsim.git /batsim_src
+# Clone BatSim source (use nix shell to avoid nix-env profile conflicts with git-minimal)
+RUN nix shell nixpkgs#git -c git clone https://framagit.org/batsim/batsim.git /batsim_src
 
 # Build BatSim (takes 10-30 min, cached in layers)
 WORKDIR /batsim_src
