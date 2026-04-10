@@ -1,2 +1,0 @@
-option('do_internal_tests', type : 'boolean', value : false,
-    description : 'Enable internal tests (requires gtest)')
