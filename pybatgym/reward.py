@@ -28,7 +28,9 @@ class RewardCalculator(ABC):
         """Compute reward for a single step."""
 
     @abstractmethod
-    def compute_episode_reward(self, completed_jobs: list[Job], total_time: float) -> float:
+    def compute_episode_reward(
+        self, completed_jobs: list[Job], total_time: float, total_cores: int = 64,
+    ) -> float:
         """Compute reward at episode end."""
 
 
@@ -90,7 +92,9 @@ class DefaultRewardCalculator(RewardCalculator):
         self._prev_utilization = resource.utilization
         return reward
 
-    def compute_episode_reward(self, completed_jobs: list[Job], total_time: float) -> float:
+    def compute_episode_reward(
+        self, completed_jobs: list[Job], total_time: float, total_cores: int = 64,
+    ) -> float:
         if not completed_jobs:
             return -1.0
 
@@ -98,11 +102,11 @@ class DefaultRewardCalculator(RewardCalculator):
         avg_sd = sum(j.bounded_slowdown for j in completed_jobs) / len(completed_jobs)
         throughput = len(completed_jobs) / max(total_time, 1.0)
 
-        # Compute utilization from finished jobs
+        # Utilization from finished jobs (uses actual platform size, not hardcode)
         total_core_seconds = sum(
             j.actual_runtime * j.requested_resources for j in completed_jobs
         )
-        max_core_seconds = total_time * 64  # placeholder total cores
+        max_core_seconds = total_time * total_cores  # RWD-1 fixed: was hardcoded 64
         util = min(1.0, total_core_seconds / max(max_core_seconds, 1.0))
 
         reward = (

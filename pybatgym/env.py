@@ -134,6 +134,7 @@ class PyBatGymEnv(gym.Env):
             episode_reward = self._reward_calc.compute_episode_reward(
                 self._adapter.get_completed_jobs(),
                 self._adapter.get_current_time(),
+                total_cores=self._config.platform.total_cores,  # RWD-1 fix
             )
             step_reward += episode_reward
 

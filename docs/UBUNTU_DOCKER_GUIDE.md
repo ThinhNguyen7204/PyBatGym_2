@@ -1,7 +1,9 @@
 # Hướng Dẫn Chạy PyBatGym Trên Ubuntu (Docker)
 
-> **Mục tiêu:** Chạy PyBatGym với BatSim thật (C++ simulator) qua ZeroMQ,
-> sử dụng Docker container Ubuntu 22.04 trên Windows (WSL2).
+> **Mục tiêu:** Chạy PyBatGym với BatSim C++ simulator (phiên bản **3.1.0**) qua ZeroMQ,
+> sử dụng Docker Compose trên Windows/Mac.
+>
+> **Phiên bản đang dùng**: `oarteam/batsim:3.1.0` — không cần build từ Nix.
 
 ---
 
@@ -9,15 +11,13 @@
 
 1. [Tổng Quan Kiến Trúc](#1-tổng-quan-kiến-trúc)
 2. [Yêu Cầu Hệ Thống](#2-yêu-cầu-hệ-thống)
-3. [Bước 1: Khởi Tạo Docker Container](#bước-1-khởi-tạo-docker-container)
+3. [Bước 1: Khởi Tạo Docker Container (shell)](#bước-1-khởi-tạo-docker-container)
 4. [Bước 2: Cài Đặt Python Environment](#bước-2-cài-đặt-python-environment)
-5. [Bước 3: Cài Đặt Nix Package Manager](#bước-3-cài-đặt-nix-package-manager)
-6. [Bước 4: Build BatSim Từ Source](#bước-4-build-batsim-từ-source)
-7. [Bước 5: Cài PyBatsim Bridge](#bước-5-cài-pybatsim-bridge)
-8. [Bước 6: Chạy Test](#bước-6-chạy-test)
-9. [Lưu Ý Quan Trọng](#lưu-ý-quan-trọng)
-10. [Troubleshooting](#troubleshooting)
-11. [Tham Khảo Nhanh (Cheat Sheet)](#tham-khảo-nhanh-cheat-sheet)
+5. [Bước 3: Chạy BatSim 3.1.0 via Docker Image](#bước-3-chạy-batsim-qua-docker-image)
+6. [Bước 4: Chạy Test](#bước-4-chạy-test)
+7. [Lưu Ý Quan Trọng](#lưu-ý-quan-trọng)
+8. [Troubleshooting](#troubleshooting)
+9. [Tham Khảo Nhanh (Cheat Sheet)](#tham-khảo-nhanh-cheat-sheet)
 
 ---
 
@@ -25,25 +25,26 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Docker Container (Ubuntu 22.04)              │
-│                                                                 │
-│  ┌──────────────┐   ZeroMQ    ┌─────────────────────────────┐  │
-│  │   BatSim     │◄──────────►│    PyBatGym (Python)         │  │
-│  │   (C++ bin)  │  tcp:28000 │    ├── RealBatsimAdapter     │  │
-│  │              │            │    ├── PyBatsim bridge        │  │
-│  │  Nix-built   │            │    └── RL Agent (SB3/PPO)    │  │
-│  └──────────────┘            └─────────────────────────────────┘│
-│                                                                 │
-│  /workspace (mount) ←──→ D:\PyBat\PyBatGym_2 (Windows host)   │
+│                    Docker Compose (Windows host)                 │
+│                                                                  │
+│  ┌──────────────────────┐   ZeroMQ     ┌──────────────────────┐ │
+│  │  oarteam/batsim:3.1  │◄────────────►│  ghcr.io/pybatgym    │ │
+│  │  (BatSim C++ 3.1.0)  │  tcp:28000   │  ├─ RealBatsimAdapter │ │
+│  │  service: batsim     │              │  ├─ pybatsim 3.x      │ │
+│  └──────────────────────┘              │  └─ RL Agent (PPO)   │ │
+│                                        │  service: shell       │ │
+│  /workspace ←──────────────────────── └──────────────────────┘ │
+│  (mount từ D:\PyBat\PyBatGym_2)                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Luồng hoạt động:**
-1. `RealBatsimAdapter` spawn BatSim C++ process
-2. BatSim mô phỏng HPC cluster, gửi events qua ZeroMQ
-3. `pybatsim` (Python bridge) nhận events, chuyển thành PyBatGym `Event` objects
-4. RL Agent (PPO/SJF/EASY) nhận observation, ra quyết định scheduling
-5. Quyết định gửi ngược lại BatSim qua ZeroMQ → vòng lặp tiếp tục
+1. Docker Compose khởi động 2 service: `shell` (Python agent) và `batsim` (C++ simulator)
+2. `RealBatsimAdapter` kết nối ZeroMQ tới service `batsim` trên port 28000
+3. BatSim 3.1.0 mô phỏng HPC cluster, gửi events qua ZeroMQ
+4. `pybatsim` (Python bridge) nhận events, chuyển thành PyBatGym `Event` objects
+5. RL Agent (PPO/SJF/EASY) nhận observation, ra quyết định scheduling
+6. Quyết định gửi ngược lại BatSim qua ZeroMQ → vòng lặp tiếp tục
 
 ---
 
@@ -51,11 +52,12 @@
 
 | Yêu cầu | Chi tiết |
 |----------|----------|
-| **OS Host** | Windows 10/11 với WSL2 |
-| **Docker** | Docker Desktop for Windows (WSL2 backend) |
-| **RAM** | ≥ 8GB (Nix build cần ~4GB) |
-| **Disk** | ≥ 10GB trống (Nix store + BatSim build) |
+| **OS Host** | Windows 10/11 |
+| **Docker** | Docker Desktop for Windows |
+| **RAM** | ≥ 8GB |
+| **Disk** | ≥ 5GB trống |
 | **Project** | `D:\PyBat\PyBatGym_2` (hoặc path tùy chọn) |
+| **BatSim** | `oarteam/batsim:3.1.0` (pulled tự động qua docker-compose) |
 
 ---
 
@@ -65,30 +67,19 @@
 
 Đảm bảo Docker Desktop đang chạy (icon Docker ở system tray).
 
-### 1.2. Tạo container với volume mount
+### 1.2. Khởi động service `shell` (Ubuntu + Python)
 
 ```powershell
-# Chạy từ PowerShell trên Windows
-docker run -it --rm -v D:\PyBat\PyBatGym_2:/workspace ubuntu:22.04 bash
+# Chạy từ PowerShell — cd vào thư mục project trước
+docker-compose up -d shell
+
+# Kiểm tra container đang chạy
+docker ps
+# → pybatgym_2-shell-1   Up ...
 ```
 
-> **Lưu ý:** Flag `--rm` sẽ xóa container khi thoát.
-> Bỏ `--rm` nếu muốn giữ container để dùng lại:
-> ```powershell
-> docker run -it --name pybatgym -v D:\PyBat\PyBatGym_2:/workspace ubuntu:22.04 bash
-> # Lần sau: docker start -i pybatgym
-> ```
-
-### 1.3. Cài công cụ cơ bản
-
-```bash
-apt-get update -qq && apt-get install -y \
-  python3 python3-pip python3-venv \
-  git curl xz-utils sudo \
-  cmake g++ pkg-config \
-  libboost-all-dev libzmq3-dev rapidjson-dev libczmq-dev \
-  meson ninja-build unzip
-```
+> Image `ghcr.io/khiemvuong/pybatgym:latest` đã bao gồm Ubuntu 22.04, Python 3.10,
+> Stable-Baselines3, PyTorch — không cần cài thêm gì.
 
 ---
 
@@ -121,90 +112,28 @@ python -c "import stable_baselines3; print('✅ SB3 OK')"
 
 ---
 
-## Bước 3: Cài Đặt Nix Package Manager
+## Bước 3: Chạy BatSim Qua Docker Image
 
-BatSim 5.0 dùng **Nix flake** để quản lý tất cả C++ dependencies (SimGrid, intervalset, batprotocol...).
+> **BatSim phiên bản đang dùng:** `oarteam/batsim:3.1.0`
+> Không cần build từ Nix. Image đã sẵn có trên Docker Hub.
 
-### 3.1. Cài Nix
+BatSim chạy như một service riêng trong Docker Compose.
+Khi dùng `docker-compose up batsim`, nó tự kết nối vào Python agent qua ZeroMQ.
 
-```bash
-# Cài Nix (single-user mode, không cần systemd)
-sh <(curl -L https://nixos.org/nix/install) --no-daemon
+```powershell
+# (Windows PowerShell — Terminal 2)
+cd D:\PyBat\PyBatGym_2
+docker-compose up batsim
+# BatSim sẽ tự chờ 6 giây (nhờ batsim_start.sh) rồi kết nối vào Python
 ```
 
-### 3.2. Load Nix vào shell
-
-```bash
-source ~/.nix-profile/etc/profile.d/nix.sh
-# Kiểm tra
-nix --version
-```
-
-### 3.3. Bật Flakes (experimental features)
-
-```bash
-mkdir -p ~/.config/nix
-echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
-```
-
-### 3.4. Tạo nixbld group (nếu thiếu)
-
-```bash
-groupadd -f nixbld
-for n in $(seq 1 10); do
-  useradd -g nixbld -M -N "nixbld$n" 2>/dev/null || true
-done
-```
+> **Workload mặc định của batsim container:**
+> `tiny_workload.json` + `small_platform.xml` (hardcoded trong `batsim_start.sh`).
+> Để dùng workload khác, sửa `scripts/batsim_start.sh`.
 
 ---
 
-## Bước 4: Build BatSim Từ Source
-
-### 4.1. BatSim source
-
-Source code BatSim nằm tại `/workspace/batsim_data/` (đã có sẵn trong repo).
-
-> **Lưu ý:** `batsim_data/` đã được thêm vào `.gitignore`.
-> Nếu cần clone lại:
-> ```bash
-> git clone https://framagit.org/batsim/batsim.git /workspace/batsim_data
-> ```
-
-### 4.2. Build bằng Nix (KHUYẾN NGHỊ)
-
-```bash
-export PATH=$HOME/.nix-profile/bin:$PATH
-cd /workspace/batsim_data
-nix build .#batsim
-```
-
-⏳ **Thời gian:** 10-30 phút lần đầu. Nix tự tải và build:
-- SimGrid (physics simulation)
-- intervalset (từ framagit.org)
-- batprotocol-cpp (ZMQ protocol)
-- CLI11, và các deps khác
-
-### 4.3. Kiểm tra build
-
-```bash
-./result/bin/batsim --version
-# Expected: 5.0.0-rc1
-```
-
-### 4.4. Thêm vào PATH
-
-```bash
-export PATH=/workspace/batsim_data/result/bin:$PATH
-echo 'export PATH=/workspace/batsim_data/result/bin:$PATH' >> ~/.bashrc
-
-# Verify
-which batsim
-batsim --version
-```
-
----
-
-## Bước 5: Cài PyBatsim Bridge
+## Bước 4: Cài PyBatsim Bridge
 
 PyBatsim là Python bridge giao tiếp với BatSim qua ZeroMQ.
 
@@ -213,9 +142,36 @@ source /workspace/.venv_ubuntu/bin/activate
 pip install pybatsim
 ```
 
-> **Phiên bản:** pybatsim 3.2.x tương thích với BatSim 4.x protocol.
-> BatSim 5.0 dùng batprotocol mới — nếu gặp lỗi communication,
-> xem phần [Troubleshooting](#troubleshooting).
+> **Phiên bản:** `pybatsim 3.x` tương thích với **BatSim 3.1.0**.
+> Đây là cặp phiên bản đang sử dụng trong project.
+
+---
+
+## Bước 5 (cũ — Tùy chọn): Build BatSim 5.x Từ Nix
+
+> ⚠️ **KHÔNG CẦN** cho setup hiện tại. Mục này chỉ để tham khảo nếu muốn nâng cấp lên BatSim 5.x.
+> BatSim 5.x dùng `batprotocol` mới — **chưa tương thích** với pybatsim 3.x.
+>
+> Xem [README](../README.md#troubleshooting) để biết thêm.
+
+<details>
+<summary>Hiển thị hướng dẫn Nix build (tham khảo)</summary>
+
+```bash
+# Cài Nix (single-user mode)
+sh <(curl -L https://nixos.org/nix/install) --no-daemon
+source ~/.nix-profile/etc/profile.d/nix.sh
+mkdir -p ~/.config/nix
+echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+
+# Build BatSim 5.x từ source (10-30 phút)
+cd /workspace/batsim_data
+nix build .#batsim
+export PATH=/workspace/batsim_data/result/bin:$PATH
+batsim --version  # → 5.0.0-rc1
+```
+
+</details>
 
 ---
 
@@ -333,11 +289,12 @@ git commit -m "chore: untrack ignored files"
 **Lý do:** Docker Desktop chưa chạy.
 **Fix:** Mở Docker Desktop, đợi icon chuyển xanh, thử lại.
 
-### ❌ `batsim: command not found`
+### ❌ `batsim: command not found` (khi dùng local binary)
 **Fix:**
 ```bash
 export PATH=/workspace/batsim_data/result/bin:$PATH
 ```
+> Lưu ý: Khi dùng `docker-compose up batsim`, không cần batsim trong PATH.
 
 ### ❌ `TypeError: Batsim.__init__() got an unexpected keyword argument`
 **Lý do:** pybatsim 3.x dùng positional args.
@@ -349,17 +306,19 @@ export PATH=/workspace/batsim_data/result/bin:$PATH
 
 ### ❌ `Timeout waiting for BatSim`
 **Kiểm tra:**
-1. BatSim có trong PATH không? → `which batsim`
-2. Port 28000 có bị chiếm? → `ss -tlnp | grep 28000`
+1. Container batsim có đang chạy? → `docker ps`
+2. Port 28000 có bị chiếm? → (trong container) `ss -tlnp | grep 28000`
 3. Workload file có tồn tại? → `ls /workspace/data/workloads/`
-4. Platform file có tồn tại? → `ls /workspace/batsim_data/platforms/`
 
-### ❌ BatSim 5.0 + pybatsim 3.x protocol mismatch
-BatSim 5.0 dùng `batprotocol` (mới), pybatsim 3.x dùng protocol cũ.
-**Workaround:** Dùng BatSim 4.x hoặc chờ pybatsim 4.x hỗ trợ batprotocol.
+### ❌ Port conflict `Address already in use: 28000`
+**Nguyên nhân:** Episode trước chưa release port.
+**Fix đã áp dụng trong code (Fix 3):** `real_adapter.py` tự động tìm port trống khi dùng local binary.
+**Với docker-compose:** `docker-compose down && docker-compose up -d shell`
 
-### ❌ Nix build lỗi `error: unable to fork`
-**Fix:** Container cần thêm RAM. Thêm flag: `docker run --memory=4g ...`
+### ❌ BatSim 5.x + pybatsim 3.x protocol mismatch
+**Note:** Project hiện đang dùng **BatSim 3.1.0** (docker: `oarteam/batsim:3.1.0`) + pybatsim 3.x.
+Không cần lo vấn đề này.
+**Nếu upgrade lên BatSim 5.x:** cần pybatsim 4.x hỗ trợ batprotocol mới (chưa release).
 
 ---
 

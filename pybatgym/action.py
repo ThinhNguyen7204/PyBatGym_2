@@ -1,7 +1,13 @@
 """Action mapper for PyBatGym.
 
 Maps discrete RL agent actions to BatSim scheduling commands.
-Action space: Discrete(K+1) where indices 0..K-1 select jobs, K = WAIT.
+
+Action space: Discrete(K+2) where:
+  0..K-1 : select job i from top-K wait-sorted queue (EXECUTE_JOB)
+  K      : WAIT (do nothing, advance simulation)
+  K+1    : SCHEDULE_SMALLEST_FITTING — backfill-aware action: pick the
+           smallest-core-demand job that fits in current free resources.
+           If no job fits, falls back to WAIT.
 """
 
 from __future__ import annotations
@@ -32,29 +38,69 @@ class ActionMapper(ABC):
 
 
 class DefaultActionMapper(ActionMapper):
-    """Maps Discrete(K+1) actions to scheduling commands.
+    """Maps Discrete(K+2) actions to scheduling commands.
 
-    Actions 0..K-1: select the i-th job from top-K pending queue.
-    Action K: WAIT (do nothing, advance simulation).
+    Actions 0..K-1 : select the i-th job from top-K pending queue
+                     (sorted by waiting_time descending).
+    Action K       : WAIT — do nothing, advance simulation.
+    Action K+1     : SCHEDULE_SMALLEST_FITTING — backfill-aware:
+                     schedule the pending job with the fewest requested cores
+                     that currently fits in free resources. Falls back to WAIT
+                     if no job fits.
 
-    If selected job cannot be allocated (insufficient resources), the action
-    is treated as invalid and a WAIT is returned instead.
+    If selected job (actions 0..K-1) cannot be allocated due to insufficient
+    resources, the action is treated as invalid and WAIT is returned.
     """
+
+    # Sentinel action indices
+    _WAIT = None  # determined dynamically via _max_jobs
 
     def __init__(self, max_jobs: int = 10) -> None:
         self._max_jobs = max_jobs
+        # K+1 = WAIT index, K+2 total (0..K-1, K=WAIT, K+1=SMALLEST_FITTING)
 
     def get_action_space(self) -> gym.spaces.Discrete:
-        return gym.spaces.Discrete(self._max_jobs + 1)
+        return gym.spaces.Discrete(self._max_jobs + 2)  # K + WAIT + SMALLEST_FITTING
+
+    @property
+    def wait_action(self) -> int:
+        """Index of the WAIT action."""
+        return self._max_jobs
+
+    @property
+    def backfill_action(self) -> int:
+        """Index of SCHEDULE_SMALLEST_FITTING."""
+        return self._max_jobs + 1
 
     def map(self, action: int, state: dict[str, Any]) -> Optional[ScheduleCommand]:
-        if action == self._max_jobs:
-            return ScheduleCommand(command_type=ScheduleCommandType.WAIT)
-
         pending_jobs: list[Job] = state.get("pending_jobs", [])
         resource: Resource = state["resource"]
 
-        sorted_jobs = sorted(pending_jobs, key=lambda j: j.submit_time)
+        # ── WAIT ─────────────────────────────────────────────────────────
+        if action == self.wait_action:
+            return ScheduleCommand(command_type=ScheduleCommandType.WAIT)
+
+        # ── SCHEDULE_SMALLEST_FITTING (backfill-aware) ────────────────────
+        if action == self.backfill_action:
+            fitting = [
+                j for j in pending_jobs
+                if resource.can_allocate(j.requested_resources)
+            ]
+            if not fitting:
+                return ScheduleCommand(command_type=ScheduleCommandType.WAIT)
+            # Pick job with minimum core demand (greedy backfill)
+            selected = min(fitting, key=lambda j: j.requested_resources)
+            return ScheduleCommand(
+                command_type=ScheduleCommandType.EXECUTE_JOB,
+                job=selected,
+                allocated_cores=selected.requested_resources,
+            )
+
+        # ── SCHEDULE JOB i from top-K ──────────────────────────────────────
+        sorted_jobs = sorted(
+            pending_jobs,
+            key=lambda j: j.submit_time,
+        )
         top_k = sorted_jobs[: self._max_jobs]
 
         if action >= len(top_k):

@@ -75,6 +75,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
         self.config = config
         self.socket_endpoint = socket_endpoint
+        self._default_port: int = 28000  # base port; may be overridden per episode (Fix 3)
 
         # Threading bridges
         self._action_queue: queue.Queue = queue.Queue()
@@ -102,19 +103,10 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         pass
 
     def reset(self) -> tuple[list[Event], Resource]:
-        """Restart simulation: spawn BatSim process + pybatsim thread."""
-        # Kill previous background thread if still alive
-        if self._batsim_thread and self._batsim_thread.is_alive():
-            self._is_done = True
-            # Unblock the thread if it's stuck waiting on action_queue
-            try:
-                self._action_queue.put_nowait([])
-            except Exception:
-                pass
-            self._batsim_thread.join(timeout=3)
-
+        """Restart simulation: clean up previous run, then spawn fresh BatSim."""
+        self._kill_simulation()   # Fix 1: proper cleanup of subprocess + thread
         self._clear_state()
-        self._start_batsim_subprocess()
+        self._start_batsim_subprocess()  # may update socket_endpoint with free port (Fix 3)
         self._start_pybatsim_thread()
         self._wait_for_next_state()
         return self._consume_events(), self._resource
@@ -130,11 +122,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
     def close(self) -> None:
         """Terminate BatSim process and background thread."""
-        self._is_done = True
-        if self._batsim_proc:
-            self._batsim_proc.terminate()
-            self._batsim_proc.wait()
-            self._batsim_proc = None
+        self._kill_simulation()  # Fix 1: unified cleanup
 
     def get_current_time(self) -> float:
         return self._internal_time
@@ -154,6 +142,51 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
             total_nodes=self.config.platform.total_nodes,
             total_cores_per_node=self.config.platform.cores_per_node,
         )
+
+    @staticmethod
+    def _find_free_port(start: int = 28000) -> int:
+        """Find an available TCP port, starting from `start`. (Fix 3)"""
+        import socket as _socket
+        for port in range(start, start + 100):
+            try:
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                    s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+                    s.bind(('', port))
+                    return port
+            except OSError:
+                continue
+        return start  # fallback — caller will handle bind error
+
+    def _kill_simulation(self) -> None:
+        """Cleanly stop pybatsim thread and BatSim subprocess. (Fix 1)
+
+        Order matters:
+        1. Signal thread via _is_done flag + unblock any action_queue.get()
+        2. Terminate subprocess so BatSim side closes the ZMQ socket
+        3. Join thread so Python side releases its ZMQ socket
+        """
+        # Step 1: signal stop
+        self._is_done = True
+        try:
+            self._action_queue.put_nowait([])
+        except Exception:
+            pass
+
+        # Step 2: kill subprocess (BatSim side closes ZMQ)
+        if self._batsim_proc is not None:
+            if self._batsim_proc.poll() is None:  # still running
+                self._batsim_proc.terminate()
+                try:
+                    self._batsim_proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._batsim_proc.kill()
+                    self._batsim_proc.wait()
+            self._batsim_proc = None
+
+        # Step 3: join thread (Python/pybatsim side closes ZMQ socket)
+        if self._batsim_thread is not None and self._batsim_thread.is_alive():
+            self._batsim_thread.join(timeout=5)
+        self._batsim_thread = None
 
     def _clear_state(self) -> None:
         self._internal_time = 0.0
@@ -196,24 +229,35 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         return platform, workload
 
     def _start_batsim_subprocess(self) -> None:
-        """Spawn the BatSim C++ process."""
-        if self._batsim_proc and self._batsim_proc.poll() is None:
-            self._batsim_proc.terminate()
+        """Spawn the BatSim C++ process (local binary mode).
 
+        Fix 3: When running a local batsim binary, select a free port
+        per episode so back-to-back resets don't collide on port 28000.
+        External mode (docker-compose batsim) keeps the hardcoded endpoint
+        because batsim_start.sh uses tcp://shell:28000.
+        """
         platform, workload = self._resolve_paths()
-        socket = self.socket_endpoint.replace("*", "localhost")
 
-        # Auto-detect batsim binary (no need to set PATH manually)
+        # Auto-detect batsim binary
         try:
             batsim_bin = _find_batsim()
-        except FileNotFoundError as e:
-            print("[RealBatsimAdapter] Local 'batsim' binary not found. Assuming BatSim is running externally (e.g., Plan B via Docker).")
+        except FileNotFoundError:
+            print(
+                "[RealBatsimAdapter] Local 'batsim' binary not found. "
+                "Assuming BatSim is running externally (e.g., docker-compose batsim)."
+            )
+            # Keep existing socket_endpoint (default tcp://*:28000) for external mode
             return
 
-        Path("logs").mkdir(exist_ok=True)
-        cmd = [batsim_bin, "-p", platform, "-w", workload, "-e", "logs/batsim_out", "-s", socket]
+        # Fix 3: pick a free port so consecutive resets don't hit port conflicts
+        free_port = self._find_free_port(self._default_port)
+        self.socket_endpoint = f"tcp://*:{free_port}"
+        socket_addr = f"tcp://localhost:{free_port}"
 
-        print(f"[RealBatsimAdapter] Starting BatSim: {' '.join(cmd)}")
+        Path("logs").mkdir(exist_ok=True)
+        cmd = [batsim_bin, "-p", platform, "-w", workload, "-e", "logs/batsim_out", "-s", socket_addr]
+
+        print(f"[RealBatsimAdapter] Starting BatSim on port {free_port}: {' '.join(cmd)}")
         try:
             self._batsim_proc = subprocess.Popen(
                 cmd,
@@ -221,8 +265,8 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
                 stderr=subprocess.PIPE,
             )
             print(f"[RealBatsimAdapter] BatSim PID: {self._batsim_proc.pid}")
-        except FileNotFoundError as e:
-            print(f"[RealBatsimAdapter] ERROR: {e}")
+        except FileNotFoundError as exc:
+            print(f"[RealBatsimAdapter] ERROR launching BatSim: {exc}")
             self._is_done = True
 
     def _start_pybatsim_thread(self) -> None:
@@ -304,7 +348,12 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
             self._completed_jobs.append(py_job)
             self._resource.release(py_job.requested_resources)
             self._events.append(Event(EventType.JOB_COMPLETED, self._internal_time, job=py_job))
-        self._wakeup_and_wait()
+
+        # Fix 2: only wake the RL agent when there are pending jobs to schedule.
+        # If the queue is empty, BatSim continues without a PPO round-trip,
+        # eliminating the unnecessary ZMQ latency on every completion event.
+        if self._pending_jobs:
+            self._wakeup_and_wait()
 
     def _wakeup_and_wait(self) -> None:
         """BatSim paused: send state to RL agent, wait for decision."""
