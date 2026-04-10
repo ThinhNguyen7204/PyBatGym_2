@@ -5,6 +5,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+batsim_data
 
 # ── Distribution / packaging ───────────────────────────────────────────────
 *.egg
