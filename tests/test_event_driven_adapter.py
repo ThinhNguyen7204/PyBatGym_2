@@ -5,7 +5,6 @@ import pytest
 from pybatgym.batsim_adapter import (
     EventDrivenMockAdapter,
     MockAdapter,
-    TickBasedMockAdapter,
 )
 from pybatgym.config.base_config import PyBatGymConfig
 from pybatgym.models import EventType, ScheduleCommand, ScheduleCommandType
@@ -134,54 +133,6 @@ class TestEventDrivenMockAdapter:
                 break
         assert done
 
-    def test_episode_fewer_steps_than_tick_based(self):
-        """Event-driven should complete in fewer steps than tick-based."""
-        config = _make_config(num_jobs=10)
-
-        # Run event-driven
-        ed = EventDrivenMockAdapter(config)
-        ed.reset()
-        ed_steps = 0
-        for _ in range(10000):
-            pending = ed.get_pending_jobs()
-            if pending:
-                job = pending[0]
-                cmd = ScheduleCommand(
-                    command_type=ScheduleCommandType.EXECUTE_JOB,
-                    job=job,
-                    allocated_cores=job.requested_resources,
-                )
-                _, done = ed.step(cmd)
-            else:
-                _, done = ed.step(None)
-            ed_steps += 1
-            if done:
-                break
-
-        # Run tick-based
-        config2 = _make_config(num_jobs=10)
-        tb = TickBasedMockAdapter(config2)
-        tb.reset()
-        tb_steps = 0
-        for _ in range(20000):
-            pending = tb.get_pending_jobs()
-            if pending:
-                job = pending[0]
-                cmd = ScheduleCommand(
-                    command_type=ScheduleCommandType.EXECUTE_JOB,
-                    job=job,
-                    allocated_cores=job.requested_resources,
-                )
-                _, done = tb.step(cmd)
-            else:
-                _, done = tb.step(None)
-            tb_steps += 1
-            if done:
-                break
-
-        # Event-driven should use significantly fewer steps
-        assert ed_steps < tb_steps, f"ED={ed_steps} should be < TB={tb_steps}"
-
     def test_completion_frees_resources(self):
         """Resources must be freed when a job completes."""
         adapter = self._make(num_jobs=3)
@@ -295,50 +246,3 @@ class TestBackwardCompat:
         assert resource.total_cores > 0
         assert isinstance(events, list)
 
-    def test_tick_based_still_works(self):
-        config = _make_config(num_jobs=5)
-        adapter = TickBasedMockAdapter(config)
-        events, resource = adapter.reset()
-        assert resource.total_cores > 0
-
-        # Tick-based should advance by exactly 1.0
-        t0 = adapter.get_current_time()
-        adapter.step(None)
-        assert adapter.get_current_time() == pytest.approx(t0 + 1.0)
-
-
-class TestMetricsParity:
-    """Event-driven and tick-based should produce comparable scheduling metrics."""
-
-    def test_same_jobs_completed(self):
-        """Both adapters should complete the same jobs (FIFO schedule)."""
-        config_ed = _make_config(num_jobs=10)
-        config_tb = _make_config(num_jobs=10)
-
-        # FIFO schedule on both
-        ed_completed = self._run_fifo(EventDrivenMockAdapter(config_ed))
-        tb_completed = self._run_fifo(TickBasedMockAdapter(config_tb))
-
-        ed_ids = sorted(j.job_id for j in ed_completed)
-        tb_ids = sorted(j.job_id for j in tb_completed)
-
-        assert ed_ids == tb_ids, "Both adapters should complete the same jobs"
-
-    @staticmethod
-    def _run_fifo(adapter) -> list:
-        adapter.reset()
-        for _ in range(20000):
-            pending = adapter.get_pending_jobs()
-            if pending:
-                job = pending[0]
-                cmd = ScheduleCommand(
-                    command_type=ScheduleCommandType.EXECUTE_JOB,
-                    job=job,
-                    allocated_cores=job.requested_resources,
-                )
-                _, done = adapter.step(cmd)
-            else:
-                _, done = adapter.step(None)
-            if done:
-                break
-        return adapter.get_completed_jobs()

@@ -55,9 +55,6 @@ class PyBatGymEnv(gym.Env):
         elif self._config.mode == "real":
             from pybatgym.real_adapter import RealBatsimAdapter
             self._adapter = RealBatsimAdapter(self._config)
-        elif self._config.mode == "mock_tick":
-            from pybatgym.batsim_adapter import TickBasedMockAdapter
-            self._adapter = TickBasedMockAdapter(self._config)
         else:
             self._adapter = MockAdapter(self._config)  # EventDrivenMockAdapter
         self._obs_builder = obs_builder or DefaultObservationBuilder(self._config.observation)
