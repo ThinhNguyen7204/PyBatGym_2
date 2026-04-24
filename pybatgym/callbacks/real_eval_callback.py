@@ -39,14 +39,17 @@ class RealEvalCallback(BaseCallback):
         real_config: PyBatGymConfig,
         eval_freq: int = 50_000,
         eval_episodes: int = 1,
-        sjf_wait: float = 0.0,
+        baselines: Optional[dict] = None,
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
         self.real_config = real_config
         self.eval_freq = eval_freq
         self.eval_episodes = eval_episodes
-        self.sjf_wait = sjf_wait
+        self.baselines = baselines or {}
+        # SJF wait baseline for competitive logic
+        self.sjf_wait = self.baselines.get("sjf", {}).get("avg_waiting_time", 0.0)
+        self.writers: Optional[dict] = None  # Injected from train script
         self._last_eval: int = 0
         self._eval_count: int = 0
 
@@ -136,11 +139,21 @@ class RealEvalCallback(BaseCallback):
         advantage = (self.sjf_wait - avg_wait) / max(self.sjf_wait, 1e-8)
         elapsed = time.time() - t0
 
-        self.logger.record("Real/avg_waiting_time", avg_wait)
-        self.logger.record("Real/utilization", avg_util)
-        self.logger.record("Real/avg_slowdown", avg_sd)
-        self.logger.record("Real/avg_reward", avg_rew)
-        self.logger.record("Real/advantage_over_SJF", advantage)
+        # --- Log Overlay Metrics (Comparison_Real Folder) ---
+        if self.writers:
+            step = self.num_timesteps
+            # Use unified tag names for overlay
+            self.writers["PPO"].add_scalar("Comparison_Real/Waiting_Time", avg_wait, step)
+            self.writers["PPO"].add_scalar("Comparison_Real/Utilization", avg_util, step)
+            self.writers["PPO"].add_scalar("Comparison_Real/Slowdown", avg_sd, step)
+
+            for name, metrics in self.baselines.items():
+                tag = name.upper()
+                if tag in self.writers:
+                    # Log baseline values at the SAME step for horizontal reference
+                    self.writers[tag].add_scalar("Comparison_Real/Waiting_Time", metrics.get("avg_waiting_time", 0), step)
+                    self.writers[tag].add_scalar("Comparison_Real/Utilization", metrics.get("avg_utilization", 0), step)
+                    self.writers[tag].add_scalar("Comparison_Real/Slowdown", metrics.get("avg_slowdown", 0), step)
 
         if self.verbose >= 1:
             verdict = "BEAT SJF ✓" if avg_wait < self.sjf_wait else "behind SJF ✗"

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
@@ -59,7 +60,8 @@ class _CompetitiveCallback(BaseCallback):
 
     def __init__(
         self,
-        sjf_wait: float,
+        baselines: dict,
+        log_dir: str,
         win_window: int = 50,
         win_rate_threshold: float = 0.80,
         min_episodes: int = 100,
@@ -69,13 +71,23 @@ class _CompetitiveCallback(BaseCallback):
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
-        self.sjf_wait = sjf_wait
+        self.baselines = baselines
+        self.sjf_wait = baselines.get("sjf", {}).get("avg_waiting_time", 0.0)
+        self.sjf_util = baselines.get("sjf", {}).get("avg_utilization", 0.0)
         self.win_window = win_window
         self.win_rate_threshold = win_rate_threshold
         self.min_episodes = min_episodes
         self.max_timesteps = max_timesteps
         self.check_every = check_every
         self.save_path = save_path
+        
+        # Multi-run writers for overlay charts
+        self.writers = {
+            "PPO": SummaryWriter(f"{log_dir}/Agent"),
+            "SJF": SummaryWriter(f"{log_dir}/SJF"),
+            "FCFS": SummaryWriter(f"{log_dir}/FCFS"),
+            "EASY": SummaryWriter(f"{log_dir}/EASY"),
+        }
 
         self._wins: list[bool] = []
         self._episode_waits: list[float] = []
@@ -88,7 +100,13 @@ class _CompetitiveCallback(BaseCallback):
 
     def _on_training_start(self) -> None:
         self._start_time = time.time()
-        self.logger.record("Baseline/SJF_avg_waiting_time", self.sjf_wait)
+        # Clean start: log initial baseline points at step 0 for horizontal line origin
+        for name, metrics in self.baselines.items():
+            tag = name.upper()
+            if tag in self.writers:
+                self.writers[tag].add_scalar("Comparison/Waiting_Time", metrics.get("avg_waiting_time", 0), 0)
+                self.writers[tag].add_scalar("Comparison/Utilization", metrics.get("avg_utilization", 0), 0)
+                self.writers[tag].add_scalar("Comparison/Slowdown", metrics.get("avg_slowdown", 0), 0)
 
     def _on_step(self) -> bool:
         dones = self.locals.get("dones", [])
@@ -143,11 +161,23 @@ class _CompetitiveCallback(BaseCallback):
         win_rate = sum(recent) / len(recent)
         advantage = (self.sjf_wait - avg_wait) / max(self.sjf_wait, 1e-8)
 
-        self.logger.record("HPC/avg_waiting_time", avg_wait)
-        self.logger.record("HPC/utilization", util)
-        self.logger.record("HPC/avg_slowdown", avg_sd)
-        self.logger.record("HPC/advantage_over_SJF", advantage)
-        self.logger.record("HPC/win_rate_vs_SJF", win_rate)
+        # --- Log Overlay Metrics (This is the KEY for combined charts) ---
+        step = self.num_timesteps
+        # We use identical tag names across different writers so TB overlays them
+        self.writers["PPO"].add_scalar("Comparison/Waiting_Time", avg_wait, step)
+        self.writers["PPO"].add_scalar("Comparison/Utilization", util, step)
+        self.writers["PPO"].add_scalar("Comparison/Slowdown", avg_sd, step)
+
+        for name, metrics in self.baselines.items():
+            tag = name.upper()
+            if tag in self.writers:
+                # Log baseline value at the SAME step as the Agent for a horizontal line
+                if "avg_waiting_time" in metrics:
+                    self.writers[tag].add_scalar("Comparison/Waiting_Time", metrics["avg_waiting_time"], step)
+                if "avg_utilization" in metrics:
+                    self.writers[tag].add_scalar("Comparison/Utilization", metrics["avg_utilization"], step)
+                if "avg_slowdown" in metrics:
+                    self.writers[tag].add_scalar("Comparison/Slowdown", metrics["avg_slowdown"], step)
 
         if win_rate > self._best_win_rate and self.save_path:
             self._best_win_rate = win_rate
@@ -322,13 +352,24 @@ def main() -> None:
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
-        tensorboard_log="logs/tensorboard_real_eval",
+        tensorboard_log="logs/tensorboard_comparison",
     )
     print("  Policy: MultiInputPolicy  n_steps=512  batch=128  lr=3e-4  ent_coef=0.02")
 
     # ── Callbacks ────────────────────────────────────────────────────────────
+    baselines = {
+        "fcfs": fcfs_m,
+        "sjf": sjf_m,
+        "easy": easy_m,
+    }
+
+    # Use a unique but clean run name
+    run_id = int(time.time())
+    log_dir = f"logs/tensorboard_comparison/PPO_Run_{run_id}"
+
     competitive_cb = _CompetitiveCallback(
-        sjf_wait=sjf_wait,
+        baselines=baselines,
+        log_dir=log_dir,
         win_window=50,
         win_rate_threshold=0.80,
         min_episodes=100,
@@ -337,15 +378,16 @@ def main() -> None:
         save_path=save_path,
         verbose=1,
     )
-    competitive_cb.sjf_util = sjf_util  # guard against trivial wins
 
     real_eval_cb = RealEvalCallback(
         real_config=real_config,
-        eval_freq=25_000,    # every 25k mock steps (~100 jobs → fast episodes)
-        eval_episodes=2,     # average 2 episodes for stability
-        sjf_wait=sjf_wait,
+        eval_freq=25_000,
+        eval_episodes=2,
+        baselines=baselines,
         verbose=1,
     )
+    # Share writers for Real evaluation overlay as well
+    real_eval_cb.writers = competitive_cb.writers
 
     # ── Train ────────────────────────────────────────────────────────────────
     print("\n[4/5] Training (Mock + periodic Real BatSim eval)...")
