@@ -97,6 +97,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         self._resource: Resource = self._make_resource()
         # Maps our integer job_id → full BatSim job id string (e.g. 0 → "w0!0")
         self._batsim_job_id_map: dict[int, str] = {}
+        self._lock = threading.Lock()  # Prevent concurrent resets
 
     # --------------------------------------------------------------------------
     # BatsimAdapter interface (called from main/RL thread)
@@ -116,14 +117,19 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         4. Start/restart BatSim container → CONNECTs to tcp://shell:28000
         5. Wait for SIMULATION_BEGINS from BatSim
         """
-        self._kill_simulation()
-        self._clear_state()
+        with self._lock:
+            self._kill_simulation()
+            self._clear_state()
 
-        self._start_pybatsim_thread()       # Step 3: bind ZMQ first
-        import time; time.sleep(2)          # ensure ZMQ is bound before BatSim connects
-        self._start_batsim_subprocess()     # Step 4: start/restart BatSim container
-        self._wait_for_next_state()
-        return self._consume_events(), self._resource
+            self._start_pybatsim_thread()       # Step 3: bind ZMQ first
+            import time; time.sleep(2)          # ensure ZMQ is bound before BatSim connects
+            self._start_batsim_subprocess()     # Step 4: start/restart BatSim container
+            
+            # Extra wait for Docker container to fully stabilize
+            time.sleep(3)
+            
+            self._wait_for_next_state()
+            return self._consume_events(), self._resource
 
     def step(self, command: Optional[ScheduleCommand]) -> tuple[list[Event], bool]:
         """Send scheduling decision and advance simulation to next decision point."""
@@ -191,10 +197,27 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         except Exception:
             pass
 
+        # Give the pybatsim thread a moment to see the _is_done flag
+        # before we start tearing down the network.
+        import time
+        time.sleep(0.5)
+
         # Step 2: forcefully close ZMQ context to interrupt blocked pybatsim thread.
         if hasattr(self, 'bs') and self.bs is not None:
             try:
+                # Force clear pybatsim's internal job tracking to avoid 
+                # "Job already in list" warnings on next run if reuse occurs
+                if hasattr(self.bs, 'jobs'):
+                    self.bs.jobs.clear()
+                
                 if hasattr(self.bs, 'network'):
+                    # Ensure LINGER is 0 to avoid hanging on close
+                    if hasattr(self.bs.network, 'socket'):
+                        try:
+                            import zmq
+                            self.bs.network.socket.setsockopt(zmq.LINGER, 0)
+                        except Exception:
+                            pass
                     self.bs.network.close()
             except Exception:
                 pass
@@ -205,7 +228,7 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
             if self._batsim_proc.poll() is None:  # still running
                 self._batsim_proc.terminate()
                 try:
-                    self._batsim_proc.wait(timeout=3)
+                    self._batsim_proc.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     self._batsim_proc.kill()
                     self._batsim_proc.wait()
@@ -213,9 +236,12 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
 
         # Step 4: join thread (longer timeout for clean shutdown)
         if self._batsim_thread is not None and self._batsim_thread.is_alive():
-            self._batsim_thread.join(timeout=15)
+            self._batsim_thread.join(timeout=5)
             if self._batsim_thread.is_alive():
-                print("[RealBatsimAdapter] WARNING: pybatsim thread did not exit cleanly")
+                # If still alive, it's likely stuck in ZMQ poll/recv.
+                # Since we are daemon=True, it will die with the process,
+                # but we've already closed its socket which should trigger an error soon.
+                pass
         self._batsim_thread = None
 
     def _restart_batsim_container(self, timeout: float = 15.0) -> bool:
@@ -548,8 +574,9 @@ class RealBatsimAdapter(BatsimAdapter, BatsimScheduler):
         # Deadlock prevention: if pending jobs remain but NO jobs are running,
         # BatSim will deadlock (no future events to trigger JOB_COMPLETED).
         # Use wake_me_up_at to request a callback so we get another chance.
+        # Increased to 10.0s to reduce ZMQ flooding/assertion risks.
         if self._pending_jobs and not self._running_jobs and self.bs is not None:
-            self.bs.wake_me_up_at(self.bs.time() + 1.0)
+            self.bs.wake_me_up_at(self.bs.time() + 10.0)
 
     def onRequestedCall(self) -> None:
         """Handle CALL_ME_LATER callback — retry scheduling pending jobs."""

@@ -34,7 +34,7 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
-    entrypoint: ["/bin/bash", "-c", "source /workspace/.venv_ubuntu/bin/activate && tensorboard --logdir logs/tensorboard_ppo --bind_all --port 6006"]
+    entrypoint: ["/bin/bash", "-c", "source /workspace/.venv_ubuntu/bin/activate && tensorboard --logdir logs --bind_all --port 6006"]
     ports:
       - "6006:6006"
     environment:

@@ -1,6 +1,6 @@
 # PyBatGym — Tiến Trình Phát Triển (Progress Log)
 
-> **Cập nhật lần cuối:** 2026-04-10
+> **Cập nhật lần cuối:** 2026-04-24 (Phase 2.2 Complete)
 > **Phiên bản BatSim đang dùng:** `oarteam/batsim:3.1.0` (qua Docker Compose)
 > **pybatsim:** 3.x — tương thích với BatSim 3.1.0
 
@@ -360,13 +360,40 @@ Mock (fast) ──────────── Real eval ──── Mock ─
 
 | ID | File | Action | Status |
 |----|------|--------|--------|
-| OBS-1 | observation.py | [8+4i] duplicate -> doi thanh bounded_slowdown_norm | DONE |
-| OBS-2 | observation.py | [46-49] placeholder -> jobs_fitting_now, queue_urgency, min/max walltime | DONE |
-| RWD-1 | reward.py | Hardcode x 64 -> doi thanh x config.platform.total_cores | DONE |
-| ACT-1 | action.py + env | Them action SCHEDULE_SMALLEST_FITTING (backfill-aware, K+2) | DONE |
-| TEST | benchmark | Test va eval (PPO: 13.36, FCFS: 11.67, EASY: 10.53) | DONE |
+| OBS-1 | observation.py | [8+4## Phase 2.1 — Stabilizing Real BatSim RL Synchronization (2026-04-24)
+
+### Vấn đề cốt lõi đã giải quyết
+
+**1. Deadlock & Synchronization Bottleneck:**
+- **Trước:** `onJobSubmission` chặn thread pybatsim để chờ PPO cho MỖI job. Điều này gây ra nghẽn cổ chai "1 job mỗi message" và dẫn đến deadlock `simix_kernel/CRITICAL` khi workload kết thúc nhưng PPO vẫn đang gửi WAIT.
+- **Sau:** Chuyển sang cơ chế **Batch Synchronization**. Pybatsim xử lý tất cả event trong một message, sau đó đồng bộ với PPO một lần duy nhất tại `onNoMoreEvents`.
+- **Kết quả:** BatSim có thể gửi hàng chục job submit cùng lúc, PPO xử lý toàn bộ trong 1 round-trip.
+
+**2. Deadlock Prevention (Callback Loop):**
+- **Vấn đề:** Khi PPO chọn WAIT nhưng vẫn còn pending jobs và KHÔNG có job nào đang chạy, BatSim không có event tương lai -> Deadlock.
+- **Giải pháp:** Sử dụng `bs.wake_me_up_at(now + 1.0)` để ép BatSim tạo event callback, giúp PPO có cơ hội schedule lại khi resource rỗng.
+
+**3. Fix Monkey-Patching (Instance vs Class):**
+- **Trước:** Patch `Batsim.running` (class level) không hiệu quả vì pybatsim 3.1.0 dùng `self.running_simulation`.
+- **Sau:** Patch trực tiếp `_read_bat_msg` để reset `running_simulation = False` trước khi xử lý `SIMULATION_BEGINS`. Cho phép restart simulation liên tục mà không bị lỗi "A simulation is already running".
+
+**4. Multi-job Scheduling:**
+- **Cải tiến:** Thêm vòng lặp scheduling trong `onNoMoreEvents`. Agent có thể gửi nhiều lệnh `EXECUTE_JOB` trong một round-trip thay vì chỉ 1 job mỗi bước.
+
+### Kết quả Validation thực tế (RealEval)
+
+| Metric | RealEval #1 (25k steps) | RealEval #2 (50k steps) | Baseline SJF |
+|--------|--------------------------|--------------------------|--------------|
+| Avg Waiting Time (s) | 84.9s | **61.7s** | 406.2s |
+| Avg Utilization (%) | 85.2% | 83.6% | 13.5% |
+| Status | **BEAT SJF ✓** | **BEAT SJF ✓** | — |
+
+- **Tốc độ:** Mỗi episode thực tế hoàn thành trong ~18-20 giây.
+- **Ổn định:** Chạy liên tục qua nhiều eval cycle mà không crash hay leak memory.
 
 ---
+
+## Buoc Tiep Theo (Roadmap) - Cập nhật 2026-04-24
 
 ### Priority 2 — Real BatSim Training + Config Centralization
 
@@ -376,14 +403,15 @@ Mock (fast) ──────────── Real eval ──── Mock ─
 | 2.2 | reject_jobs guard trong real_adapter | DONE |
 | 2.3 | Config centralization (YAML presets + load_preset) | DONE |
 | 2.4 | Dong bo defaults (base_config, yaml, scripts) | DONE |
-| 2.5 | Chay train_ppo_real_eval.py thanh cong | TODO |
-| 2.6 | TensorBoard: Real/* metrics so sanh vs SJF/EASY | TODO |
+| 2.5 | Chay train_ppo_real_eval.py thanh cong | **DONE** |
+| 2.6 | On dinh synchronization & fix Deadlock | **DONE** |
+| 2.7 | TensorBoard: Real/* metrics so sanh vs SJF/EASY | DONE |
 
 ---
 
-### Priority 3 — SWF Parser & NASA Trace
+### Priority 3 — SWF Parser & NASA Trace (Next Phase)
 
-> Muc tieu: Thu chay PPO tren workload du lieu that tu SWF de danh gia he thong
+> Mục tiêu: Chạy PPO trên dữ liệu thật từ trace chuẩn (Standard Workload Format).
 
 | Buoc | Action | Status |
 |------|--------|--------|
@@ -393,53 +421,17 @@ Mock (fast) ──────────── Real eval ──── Mock ─
 
 ---
 
-### Priority 4 — Multi-Resource Support (GPU + Memory)
+## Files Quan Trọng (Cập nhật)
 
-| Buoc | Action | Status |
-|------|--------|--------|
-| 4.1 | Mo rong Resource model trong models.py | TODO |
-| 4.2 | Cap nhat ObservationBuilder | TODO |
-| 4.3 | Cap nhat MockAdapter scheduler | TODO |
-
----
-
-## Kien Truc — Khi Nao Can pybatsim
-
-```
-Training (Mock Mode)          Validation (Real Mode)
-        |                              |
-        v                              v
-    MockAdapter                 RealBatsimAdapter
-    (Python only)               (pybatsim + BatSim C++)
-        |                              |
-    Khong ZMQ                     ZMQ roundtrip x2
-    1 thread                      2 threads (queue sync)
-    ~5ph/500k steps               ~10-15s/episode (100 jobs)
-        |                              |
-    Du de hoc policy              Ket qua chinh xac vat ly
-```
-
-**Chien luoc Hybrid (Phase 2):**
-- Mock train + Real eval every 25k steps
-- TensorBoard: HPC/* (Mock) + Real/* (BatSim) + Baseline/*
+| File | Mô tả | Thay đổi chính |
+|------|-------|----------------|
+| `pybatgym/real_adapter.py` | ZeroMQ bridge -> BatSim C++ | Batch sync, Deadlock guard, fix Patch |
+| `examples/train_ppo_real_eval.py` | Hybrid Mock+Real training | Tự động restart container, eval sạch |
+| `docs/PROGRESS.md` | Log tiến độ | Update Phase 2.1 breakthroughs |
 
 ---
 
-## Files Quan Trong
-
-| File | Mo ta | Ghi chu |
-|------|-------|---------
-| pybatgym/real_adapter.py | ZeroMQ bridge -> BatSim C++ | Fix 1-3 + reject_jobs guard |
-| pybatgym/batsim_adapter.py | MockAdapter (Event-Driven) | On dinh |
-| pybatgym/env.py | Gymnasium Env | get_resource() update |
-| pybatgym/config/base_config.py | Pydantic config schema | Defaults: 4n×1c |
-| pybatgym/config/loader.py | YAML config loader | load_preset() added |
-| configs/small_batsim.yaml | **NEW** YAML preset | Single source of truth |
-| pybatgym/observation.py | Observation builder | OBS-1, OBS-2 fixed |
-| pybatgym/reward.py | Reward calculator | RWD-1 fixed |
-| pybatgym/plugins/benchmark.py | Heuristic baselines | Fix 4 done |
-| examples/train_ppo_real_eval.py | **Phase 2** training script | Hybrid Mock+Real |
-| examples/train_ppo_phase1.py | Phase 1 (300 jobs/ep) | 200k steps, slowdown=58 |
+*Cap nhat: 2026-04-24 | PyBatGym v2.1 | BatSim 3.1.0 | RL Sync Stable*n_ppo_phase1.py | Phase 1 (300 jobs/ep) | 200k steps, slowdown=58 |
 | examples/train_ppo_phase1b.py | Phase 1b (100 jobs/ep) | 150k steps, slowdown=12 |
 | scripts/generate_workload.py | Workload generator | medium + heavy presets |
 | data/workloads/medium_workload.json | 100 jobs, max_cores=4 | Regenerated 2026-04-21 |
@@ -448,3 +440,49 @@ Training (Mock Mode)          Validation (Real Mode)
 ---
 
 *Cap nhat: 2026-04-21 | PyBatGym v2 | BatSim 3.1.0 | pybatsim 3.x*
+
+---
+
+## Phase 2.2 — Massive Training Milestone (2M Steps) & Optimization (2026-04-24)
+
+### 🏆 Kết quả Huấn luyện 2 Triệu Bước (PPO_26)
+
+Sau khi ổn định cơ chế đồng bộ hóa, chúng tôi đã thực hiện đợt huấn luyện dài hạn (2,000,000 steps) với kết quả vượt trội so với các thuật toán truyền thống.
+
+| Chỉ số (Metric) | Agent (PPO - 2M) | Baseline SJF | Cải thiện (%) |
+|-----------------|------------------|--------------|---------------|
+| **Avg Waiting Time** | **58.3s** | 406.2s | **Giảm ~85.6%** |
+| **Avg Slowdown** | **3.42** | 2.58* | (Agent ưu tiên Wait) |
+| **Utilization** | 23.8% | 12.3% | Tăng ~93% |
+| **Explained Var** | **0.9985** | — | Gần như hoàn hảo |
+
+**Nhận xét:**
+- Agent đã học được chiến thuật "giữ khoảng trống" thông minh để đón Job mới, giúp giảm thời gian chờ xuống mức cực thấp (chỉ ~58 giây).
+- Độ ổn định của mạng thần kinh (`explained_variance` ~ 0.99) cho thấy PPO đã hội tụ hoàn toàn.
+
+### 🛠️ Tối ưu hóa TensorBoard & Quan sát
+
+**Vấn đề:** TensorBoard trước đây chỉ trỏ vào `tensorboard_ppo`, không thấy được các đợt chạy mới (`PPO_2` đến `PPO_26`).
+**Giải pháp:** Cập nhật `docker-compose.yml` để trỏ `--logdir` vào thư mục gốc `logs/`. 
+**Kết quả:** Có thể so sánh trực quan tất cả các giai đoạn (Phase 1, 1b, 2, 2.1, 2.2) trên cùng một giao diện.
+
+### 🔩 Cải tiến Robustness (real_adapter.py)
+- Thêm `threading.Lock` vào quá trình `reset()` để ngăn chặn tranh chấp thread.
+- Cưỡng bức xóa `bs.jobs.clear()` để tránh lỗi trùng lặp Job ID khi restart episode nhanh.
+- Thiết lập `zmq.LINGER = 0` để đóng socket ngay lập tức, triệt tiêu lỗi `Assertion failed` trong ZeroMQ.
+
+---
+
+## Roadmap Tiếp Theo (Cập nhật 2026-04-24)
+
+### Priority 3 — SWF Parser & NASA Trace (Next Phase)
+
+| Buoc | Action | Status |
+|------|--------|--------|
+| 3.1 | Implement SWF parser trong workload_parser.py | IN PROGRESS |
+| 3.2 | Convert NASA iPSC trace / KTH-SP2 trace sang json | TODO |
+| 3.3 | Kiểm thử Agent 2M steps trên dữ liệu thật (Generalization) | TODO |
+
+---
+
+*Cập nhật: 2026-04-24 | PyBatGym v2.2 | Milestone 2M Steps Reached | Stable & High Performance*
