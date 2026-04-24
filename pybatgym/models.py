@@ -110,3 +110,36 @@ class ScheduleCommand:
     command_type: ScheduleCommandType
     job: Optional[Job] = None
     allocated_cores: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Internal simulator event types (used by EventDrivenMockAdapter, NOT by RL)
+# ---------------------------------------------------------------------------
+
+class SimEventType(Enum):
+    """Internal event types for the mock event queue."""
+
+    JOB_SUBMISSION = auto()
+    JOB_COMPLETION = auto()
+    CALL_ME_LATER = auto()
+    SIMULATION_END = auto()
+
+
+@dataclass
+class SimEvent:
+    """A scheduled event in the mock simulator's priority queue.
+
+    Ordered by (timestamp, _tiebreaker) so ``heapq`` pops the earliest
+    event first, with FIFO ordering for simultaneous events.
+    """
+
+    timestamp: float
+    event_type: SimEventType
+    job: Optional[Job] = None
+    data: dict = field(default_factory=dict)
+    _tiebreaker: int = 0
+
+    def __lt__(self, other: "SimEvent") -> bool:
+        if self.timestamp != other.timestamp:
+            return self.timestamp < other.timestamp
+        return self._tiebreaker < other._tiebreaker

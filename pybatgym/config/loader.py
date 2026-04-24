@@ -46,3 +46,20 @@ def _parse_yaml(path: Path) -> PyBatGymConfig:
         return PyBatGymConfig()
 
     return PyBatGymConfig.model_validate(raw)
+
+
+def load_preset(name: str) -> PyBatGymConfig:
+    """Load a named preset config from configs/ directory.
+
+    Example:
+        config = load_preset("small_batsim")  # → configs/small_batsim.yaml
+    """
+    preset_dir = Path(__file__).resolve().parent.parent.parent / "configs"
+    preset_path = preset_dir / f"{name}.yaml"
+    if not preset_path.exists():
+        available = [p.stem for p in preset_dir.glob("*.yaml")]
+        raise FileNotFoundError(
+            f"Preset '{name}' not found at {preset_path}. "
+            f"Available: {available}"
+        )
+    return _parse_yaml(preset_path)

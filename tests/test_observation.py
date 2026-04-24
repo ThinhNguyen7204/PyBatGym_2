@@ -36,7 +36,7 @@ class TestDefaultObservationBuilder:
 
         expected_dim = 5 + 4 * 10 + 6  # 51
         assert obs["features"].shape == (expected_dim,)
-        assert obs["action_mask"].shape == (11,)
+        assert obs["action_mask"].shape == (12,)  # K + WAIT + BACKFILL
 
     def test_values_normalized(self):
         config = ObservationConfig(top_k_jobs=5)

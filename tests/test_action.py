@@ -48,4 +48,4 @@ class TestDefaultActionMapper:
     def test_action_space_size(self):
         mapper = DefaultActionMapper(max_jobs=10)
         space = mapper.get_action_space()
-        assert space.n == 11
+        assert space.n == 12  # K + WAIT + SCHEDULE_SMALLEST_FITTING

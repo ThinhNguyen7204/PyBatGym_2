@@ -233,14 +233,99 @@ Thoi gian training    | 58 phut              | 11 phut
 
 ## Benchmark Cu (tiny_workload) -- Tham khao
 
-Dataset: tiny_workload.json (6 jobs, 5 nodes) -- qua nho
+Dataset: tiny_workload.json (6 jobs, 5 no## Phase 2 — Real BatSim Training + Config Centralization (2026-04-21)
 
+### Vấn đề phát hiện
+
+**Root cause của BatSim crash/timeout:**
+- `medium_workload.json` cũ có 500 jobs, trong đó 139 jobs yêu cầu 8 cores
+- `small_platform.xml` chỉ có 4 compute hosts × 1 core = **4 cores**
+- MockAdapter filter được jobs impossible qua `parse_workload(max_cores=4)`
+- Nhưng **Real BatSim C++ đọc trực tiếp workload file** → submit cả 500 jobs
+- 139 jobs (res=8) **không bao giờ schedule được** → deadlock → timeout 90s
+
+**Config rải rác:**
+- `total_nodes`, `cores_per_node`, `max_steps`... hardcode ở ~15 files khác nhau
+- Mỗi lần thay đổi phải sửa tất cả → dễ lệch
+
+### Giải pháp đã áp dụng
+
+#### 1. Regenerate medium_workload.json
 ```
-Metric              | SJF   | EASY  | PPO (10k steps)
-avg_waiting_time    | 0.00  | 0.00  | 0.00
-avg_slowdown        | 1.00  | 1.00  | 1.00
-avg_utilization     | 48.0% | 48.0% | 48.0%
+Trước: 500 jobs, max_cores=8  → 139 jobs impossible, ~50-150s/episode
+Sau:   100 jobs, max_cores=4  → 0 jobs impossible, ~5-15s/episode
+
+Command: python scripts/generate_workload.py --num-jobs 100 --max-cores 4 --seed 42
+Result:  Runtime: 1.8-496.5s | Cores: 1-4 | Timespan: 4.1-445.9
 ```
+
+#### 2. reject_jobs Guard (real_adapter.py)
+```python
+def onJobSubmission(self, job):
+    # Safety net: reject impossible jobs immediately
+    if job.requested_resources > self.bs.nb_compute_resources:
+        self.bs.reject_jobs([job])
+        return
+    # ... normal logic ...
+```
+
+#### 3. Config Centralization — YAML Presets
+```
+NEW:  configs/small_batsim.yaml     ← Single source of truth
+NEW:  load_preset("small_batsim")   ← Convenience function
+
+# Trước (53 dòng duplicate):
+config = PyBatGymConfig()
+config.platform.total_nodes = 4
+config.platform.cores_per_node = 1
+# ... 15 more lines × 2 functions ...
+
+# Sau (6 dòng):
+config = load_preset("small_batsim")
+config.workload.trace_path = workload_path
+```
+
+#### 4. Đồng bộ tất cả defaults
+| Source | total_nodes | cores/node | workload | max_steps |
+|--------|:-:|:-:|--------|:-:|
+| `base_config.py` | 4 | 1 | — | 500 |
+| `default.yaml` | 4 | 1 | medium | 500 |
+| `small_batsim.yaml` | 4 | 1 | medium | 500 |
+| `batsim_start.sh` | — | — | medium | — |
+| `docker-compose.yml` | — | — | medium | — |
+| `real_adapter.py` | — | — | medium | — |
+
+#### 5. Training Parameters Tuning
+| Parameter | Trước | Sau | Lý do |
+|-----------|-------|-----|-------|
+| `eval_freq` | 50,000 | 25,000 | Episode ngắn hơn → eval thường xuyên hơn |
+| `eval_episodes` | 1 | 2 | Average 2 episodes → ổn định hơn |
+| `max_steps` | 3,000 | 500 | 100 jobs ≈ 200-300 steps |
+| `max_simulation_time` | 30,000 | 10,000 | 100 jobs hoàn thành nhanh hơn |
+
+### Strategy: Hybrid Mock Train + Real Eval
+```
+Mock (fast) ──────────── Real eval ──── Mock ──── Real eval ──
+            25k steps    2 episodes     25k       2 episodes
+            (~1 min)     (~10-15s)                (~10-15s)
+```
+- PPO trains nhanh trên MockAdapter
+- Validate trên Real BatSim mỗi 25k steps
+- TensorBoard: HPC/* (Mock) + Real/* (BatSim) + Baseline/* (SJF/EASY/FCFS)
+
+### Files đã thay đổi (8 modified, 2 new)
+| File | Action |
+|------|--------|
+| `data/workloads/medium_workload.json` | Regenerated (500→100 jobs, max_cores 8→4) |
+| `pybatgym/real_adapter.py` | reject_jobs guard + default path medium |
+| `pybatgym/config/base_config.py` | Defaults: 4n×1c, max_steps=500 |
+| `pybatgym/config/loader.py` | Added `load_preset()` |
+| `pybatgym/batsim_adapter.py` | Added `get_resource()` to base + adapters |
+| `pybatgym/env.py` | Use `adapter.get_resource()` instead of stale state |
+| `configs/default.yaml` | Synced to small platform |
+| `configs/small_batsim.yaml` | **NEW** — YAML preset |
+| `examples/train_ppo_real_eval.py` | Use preset, reduce eval params |
+| `scripts/batsim_start.sh` | Default workload: tiny→medium |
 
 ---
 
@@ -251,7 +336,7 @@ avg_utilization     | 48.0% | 48.0% | 48.0%
 | Buoc | Action | Status |
 |------|--------|--------|
 | 1.1 | Tao workload generator (generate_workload.py) | DONE |
-| 1.2 | Sinh medium_workload.json (500 jobs) + heavy_workload.json (1000 jobs) | DONE |
+| 1.2 | Sinh medium_workload.json (100 jobs) + heavy_workload.json (1000 jobs) | DONE |
 | 1.3 | Tao train_ppo_phase1.py voi hyperparameters toi uu | DONE |
 | 1.4 | Train PPO 200k steps, 4 nodes x 2 cores | DONE |
 | 1.5 | Fix easy_backfilling_policy bug | DONE |
@@ -283,34 +368,28 @@ avg_utilization     | 48.0% | 48.0% | 48.0%
 
 ---
 
-### Priority 2 -- SWF Parser & NASA Trace (TIEP THEO)
+### Priority 2 — Real BatSim Training + Config Centralization
+
+| Buoc | Action | Status |
+|------|--------|--------|
+| 2.1 | Regenerate medium_workload (100 jobs, max_cores=4) | DONE |
+| 2.2 | reject_jobs guard trong real_adapter | DONE |
+| 2.3 | Config centralization (YAML presets + load_preset) | DONE |
+| 2.4 | Dong bo defaults (base_config, yaml, scripts) | DONE |
+| 2.5 | Chay train_ppo_real_eval.py thanh cong | TODO |
+| 2.6 | TensorBoard: Real/* metrics so sanh vs SJF/EASY | TODO |
+
+---
+
+### Priority 3 — SWF Parser & NASA Trace
 
 > Muc tieu: Thu chay PPO tren workload du lieu that tu SWF de danh gia he thong
 
 | Buoc | Action | Status |
 |------|--------|--------|
-| 2.1 | Viet SWF parser (read standard workloads from PWA) | TODO |
-| 2.2 | Convert NASA iPSC trace / KTH-SP2 trace sang json format cua workload generator | TODO |
-| 2.3 | Chay Phase 2: Train tren Real Trace | TODO |
-
----
-
-### Priority 2 — SWF Parser
-
-| Buoc | Action | Status |
-|------|--------|--------|
-| 2.1 | Implement SWF parser trong workload_parser.py | TODO |
-| 2.2 | Test voi NASA Ames workload (.swf) | TODO |
-
----
-
-### Priority 3 — Validate Real Mode sau 3 Fixes
-
-| Buoc | Action | Status |
-|------|--------|--------|
-| 3.1 | Chay test_real.py -> xac nhan khong port conflict | TODO |
-| 3.2 | Chay nhieu episodes lien tiep (reset lap lai) | TODO |
-| 3.3 | So sanh metrics Mock vs Real | TODO |
+| 3.1 | Implement SWF parser trong workload_parser.py | TODO |
+| 3.2 | Convert NASA iPSC trace / KTH-SP2 trace sang json | TODO |
+| 3.3 | Chay Phase 3: Train tren Real Trace | TODO |
 
 ---
 
@@ -335,43 +414,37 @@ Training (Mock Mode)          Validation (Real Mode)
         |                              |
     Khong ZMQ                     ZMQ roundtrip x2
     1 thread                      2 threads (queue sync)
-    ~5ph/500k steps               Nhieu gio/500k steps
+    ~5ph/500k steps               ~10-15s/episode (100 jobs)
         |                              |
     Du de hoc policy              Ket qua chinh xac vat ly
 ```
 
-**Chien luoc:**
-Phase A: Train voi MockAdapter + large dataset -> nhanh, hoc policy
-Phase B: Validate voi RealAdapter -> verify accuracy vs BatSim C++
+**Chien luoc Hybrid (Phase 2):**
+- Mock train + Real eval every 25k steps
+- TensorBoard: HPC/* (Mock) + Real/* (BatSim) + Baseline/*
 
 ---
 
 ## Files Quan Trong
 
 | File | Mo ta | Ghi chu |
-|------|-------|---------|
-| pybatgym/real_adapter.py | ZeroMQ bridge -> BatSim C++ | 3 fixes da ap dung |
-| pybatgym/batsim_adapter.py | MockAdapter | On dinh |
-| pybatgym/env.py | Gymnasium Env | On dinh |
-| pybatgym/observation.py | Observation builder | Known issues: OBS-1, OBS-2 |
-| pybatgym/reward.py | Reward calculator | Known issue: RWD-1 (hardcode 64) |
-| pybatgym/plugins/benchmark.py | Heuristic baselines | Fix 4 (EASY AttributeError) |
-| examples/train_ppo_trace.py | PPO training (tiny workload) | Phase 0 demo |
-| examples/train_ppo_phase1.py | PPO Phase 1 (300 jobs/ep) | 200k steps, result: slowdown=58 |
-| examples/train_ppo_phase1b.py | PPO Phase 1b (100 jobs/ep) | Convergence stop, result: slowdown=12 |
+|------|-------|---------
+| pybatgym/real_adapter.py | ZeroMQ bridge -> BatSim C++ | Fix 1-3 + reject_jobs guard |
+| pybatgym/batsim_adapter.py | MockAdapter (Event-Driven) | On dinh |
+| pybatgym/env.py | Gymnasium Env | get_resource() update |
+| pybatgym/config/base_config.py | Pydantic config schema | Defaults: 4n×1c |
+| pybatgym/config/loader.py | YAML config loader | load_preset() added |
+| configs/small_batsim.yaml | **NEW** YAML preset | Single source of truth |
+| pybatgym/observation.py | Observation builder | OBS-1, OBS-2 fixed |
+| pybatgym/reward.py | Reward calculator | RWD-1 fixed |
+| pybatgym/plugins/benchmark.py | Heuristic baselines | Fix 4 done |
+| examples/train_ppo_real_eval.py | **Phase 2** training script | Hybrid Mock+Real |
+| examples/train_ppo_phase1.py | Phase 1 (300 jobs/ep) | 200k steps, slowdown=58 |
+| examples/train_ppo_phase1b.py | Phase 1b (100 jobs/ep) | 150k steps, slowdown=12 |
 | scripts/generate_workload.py | Workload generator | medium + heavy presets |
-| scripts/run_phase1.sh | Docker runner Phase 1 | bash |
-| scripts/run_phase1b.sh | Docker runner Phase 1b | bash |
-| data/workloads/medium_workload.json | 500 jobs, log-normal runtime | Generated |
-| data/workloads/heavy_workload.json | 1000 jobs, heavy contention | Generated |
-| models/ppo_phase1.zip | Trained PPO model | 200k steps |
-| models/ppo_phase1b.zip | Trained PPO model (Phase 1b) | 150k steps, converged |
-| models/ppo_phase1b_best.zip | Best checkpoint | Auto-saved by ConvergenceCallback |
+| data/workloads/medium_workload.json | 100 jobs, max_cores=4 | Regenerated 2026-04-21 |
 | docker-compose.yml | Docker services | BatSim 3.1.0 |
-| docs/UBUNTU_DOCKER_GUIDE.md | Setup guide | Da cap nhat BatSim 3.x |
-| docs/ENV_DESIGN.md | Action/Obs/Reward reference | Known issues, improvement plan |
 
 ---
 
-*Cap nhat: 2026-04-10 | PyBatGym v2 | BatSim 3.1.0 | pybatsim 3.x*
-
+*Cap nhat: 2026-04-21 | PyBatGym v2 | BatSim 3.1.0 | pybatsim 3.x*

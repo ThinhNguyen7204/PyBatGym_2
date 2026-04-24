@@ -55,8 +55,11 @@ class PyBatGymEnv(gym.Env):
         elif self._config.mode == "real":
             from pybatgym.real_adapter import RealBatsimAdapter
             self._adapter = RealBatsimAdapter(self._config)
+        elif self._config.mode == "mock_tick":
+            from pybatgym.batsim_adapter import TickBasedMockAdapter
+            self._adapter = TickBasedMockAdapter(self._config)
         else:
-            self._adapter = MockAdapter(self._config)
+            self._adapter = MockAdapter(self._config)  # EventDrivenMockAdapter
         self._obs_builder = obs_builder or DefaultObservationBuilder(self._config.observation)
         self._action_mapper = action_mapper or DefaultActionMapper(self._config.observation.top_k_jobs)
         self._reward_calc = reward_calc or DefaultRewardCalculator(
@@ -95,7 +98,7 @@ class PyBatGymEnv(gym.Env):
             "current_time": self._adapter.get_current_time(),
             "max_time": self._config.episode.max_simulation_time,
             "pending_jobs": self._adapter.get_pending_jobs(),
-            "resource": resource,
+            "resource": self._adapter.get_resource(),
             "events": events,
         }
 
@@ -121,7 +124,7 @@ class PyBatGymEnv(gym.Env):
             "current_time": self._adapter.get_current_time(),
             "max_time": self._config.episode.max_simulation_time,
             "pending_jobs": self._adapter.get_pending_jobs(),
-            "resource": self._state["resource"],
+            "resource": self._adapter.get_resource(),
             "events": events,
         }
 

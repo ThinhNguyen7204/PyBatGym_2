@@ -18,6 +18,7 @@ services:
     image: ghcr.io/khiemvuong/pybatgym:latest
     volumes:
       - .:/workspace          # code mount từ Windows vào Ubuntu
+      - /var/run/docker.sock:/var/run/docker.sock  # cho phép Python restart BatSim container
     working_dir: /workspace
     stdin_open: true          # giữ stdin mở (cần cho interactive)
     tty: true                 # tạo terminal thật
@@ -26,7 +27,6 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - "28000:28000"
-      - "6006:6006"
 
   # ── TensorBoard (xem training metrics) ────────────────
   tensorboard:
@@ -49,5 +49,10 @@ services:
     entrypoint: ["/bin/sh", "/workspace/scripts/batsim_start.sh"]
     depends_on:
       - shell
-    restart: "no"
+    restart: "unless-stopped"  # adapter restarts between episodes via Docker API
+    environment:
+      # Override từ PowerShell: $env:BATSIM_WORKLOAD="..."
+      - BATSIM_WORKLOAD=${BATSIM_WORKLOAD:-/workspace/data/workloads/medium_workload.json}
+      - BATSIM_PLATFORM=${BATSIM_PLATFORM:-/workspace/data/platforms/small_platform.xml}
+      - BATSIM_SOCKET=${BATSIM_SOCKET:-tcp://shell:28000}
 

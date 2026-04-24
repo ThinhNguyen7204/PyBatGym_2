@@ -1,8 +1,7 @@
-# PyBatGym Default Configuration
-# Matches small_platform.xml (4 compute hosts × 1 core)
-# See docs/GUIDE.md for all options
+# PyBatGym Config: small_platform.xml (4 compute hosts × 1 core)
+# Use: load_preset("small_batsim") in Python
 
-mode: mock  # mock (fast dev) | real (BatSim)
+mode: mock
 
 platform:
   total_nodes: 4
@@ -12,9 +11,6 @@ workload:
   source: trace
   trace_path: /workspace/data/workloads/medium_workload.json
   num_jobs: 100
-  max_job_runtime: 100.0
-  max_job_cores: 4
-  seed: 42
 
 episode:
   max_simulation_time: 10000.0
@@ -24,7 +20,6 @@ observation:
   top_k_jobs: 10
   max_queue_length: 150
   max_waiting_time: 3000.0
-  max_bounded_slowdown: 100.0
 
 reward_weights:
   utilization: 0.3
@@ -33,5 +28,3 @@ reward_weights:
   throughput: 0.05
 
 reward_type: hybrid
-
-plugins: []

@@ -24,8 +24,8 @@ class RewardWeights(BaseModel):
 class PlatformConfig(BaseModel):
     """HPC cluster platform configuration."""
 
-    total_nodes: int = Field(default=16, gt=0)
-    cores_per_node: int = Field(default=4, gt=0)
+    total_nodes: int = Field(default=4, gt=0)
+    cores_per_node: int = Field(default=1, gt=0)
 
     @property
     def total_cores(self) -> int:
@@ -39,7 +39,7 @@ class WorkloadConfig(BaseModel):
     trace_path: Optional[str] = None
     num_jobs: int = Field(default=100, gt=0)
     max_job_runtime: float = Field(default=100.0, gt=0)
-    max_job_cores: int = Field(default=8, gt=0)
+    max_job_cores: int = Field(default=4, gt=0)
     seed: int = Field(default=42)
 
 
@@ -47,7 +47,7 @@ class EpisodeConfig(BaseModel):
     """Episode lifecycle configuration."""
 
     max_simulation_time: float = Field(default=10000.0, gt=0)
-    max_steps: int = Field(default=5000, gt=0)
+    max_steps: int = Field(default=500, gt=0)
 
 
 class ObservationConfig(BaseModel):
@@ -64,7 +64,7 @@ class PyBatGymConfig(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    mode: str = Field(default="mock", pattern=r"^(mock|real)$")
+    mode: str = Field(default="mock", pattern=r"^(mock|mock_tick|real)$")
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
     workload: WorkloadConfig = Field(default_factory=WorkloadConfig)
     episode: EpisodeConfig = Field(default_factory=EpisodeConfig)

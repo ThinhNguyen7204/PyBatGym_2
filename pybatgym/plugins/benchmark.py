@@ -148,7 +148,7 @@ def run_baseline(
             total_wait += wait_sum / len(completed)
             total_slowdown += slowdown_sum / len(completed)
             if makespan > 0 and total_cores > 0:
-                total_util += busy_time_sum / (makespan * total_cores)
+                total_util += min(1.0, busy_time_sum / (makespan * total_cores))
 
     n = max(num_episodes, 1)
     return {
