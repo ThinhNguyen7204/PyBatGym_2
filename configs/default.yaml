@@ -1,5 +1,5 @@
 # PyBatGym Default Configuration
-# Matches small_platform.xml (4 compute hosts × 1 core)
+# Matches small_platform.xml (4 compute hosts × 1 core = 4 cores)
 # See docs/GUIDE.md for all options
 
 mode: mock  # mock (fast dev) | real (BatSim)

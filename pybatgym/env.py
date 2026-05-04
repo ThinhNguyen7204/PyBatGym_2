@@ -164,9 +164,24 @@ class PyBatGymEnv(gym.Env):
         """Register a plugin for lifecycle hooks."""
         self._plugins.append(plugin)
 
+    def action_masks(self) -> np.ndarray:
+        """Return current valid action mask as boolean array.
+
+        This is the standard interface expected by sb3-contrib's MaskablePPO.
+        MaskablePPO auto-detects this method and calls it every step to zero-out
+        probabilities of invalid actions before sampling.
+
+        Returns:
+            Boolean numpy array of shape (action_space.n,).
+            True = action is valid, False = action is invalid.
+        """
+        obs = self._obs_builder.build(self._state)
+        return obs["action_mask"].astype(bool)
+
     # -- Private helpers --
 
     def _build_info(self, events: list) -> dict[str, Any]:
+        obs = self._obs_builder.build(self._state)
         return {
             "step": self._step_count,
             "sim_time": self._adapter.get_current_time(),
@@ -175,6 +190,7 @@ class PyBatGymEnv(gym.Env):
             "utilization": self._state["resource"].utilization,
             "cumulative_reward": self._cumulative_reward,
             "num_events": len(events),
+            "action_mask": obs.get("action_mask"),
         }
 
     def _render_ansi(self) -> str:

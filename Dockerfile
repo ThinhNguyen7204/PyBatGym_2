@@ -50,7 +50,7 @@ COPY pybatgym/__init__.py ./pybatgym/__init__.py
 
 RUN pip install --upgrade pip setuptools wheel && \
     pip install -e . && \
-    pip install stable-baselines3 tensorboard pytest pybatsim
+    pip install stable-baselines3 sb3-contrib tensorboard pytest pybatsim
 
 # Copy full project (changes more often → last layer)
 COPY . .
